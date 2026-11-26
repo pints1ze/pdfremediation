@@ -1,0 +1,3 @@
+# Authorize at checkout, capture only on completion
+
+Customers should be committed to paying but never charged for output we could not deliver. Instead of charging at checkout and refunding failures, we place a card Authorization at checkout, start the Job once it is Authorized, Capture only when the Job Completes, and Release the hold when it Fails or cannot complete before the Authorization expires (with a safety margin). This removes routine refunds and their fees, at the cost of restricting checkout to payment methods that support holds and bounding Job duration, including Repair passes and operator retries, by the provider's authorization window.
