@@ -1,6 +1,6 @@
 # PDF Remediation Service — Product Requirements Document
 
-**Document status:** Draft for stakeholder review  
+**Document status:** Draft for stakeholder review, revised 2026-11-26 to match `GLOSSARY.md` and `docs/adr/`  
 **Target platform:** .NET  
 **Delivery team:** Two junior developers  
 **Target schedule:** Eight weeks  
@@ -8,7 +8,7 @@
 
 ## 1. Summary
 
-PDF Remediation Service is a paid web application for government staff who need to improve the accessibility of PDF documents without changing their visible appearance. A customer uploads one PDF, sees a price calculated from its page count, pays, and receives a remediated PDF plus a machine-readable and human-readable processing report. The MVP uses Mistral OCR 4.1 for page and document understanding, a vendor-neutral accessibility intermediate representation (IR), PDFix Enterprise to modify the original PDF, and veraPDF to validate machine-verifiable PDF/UA requirements. The service reports validation and confidence results but does not promise that automated output is fully ADA, WCAG, or PDF/UA conformant without human review.
+PDF Remediation Service is a paid web application for government staff who need to improve the accessibility of PDF documents without changing their visible appearance. A customer uploads one PDF, sees a price calculated from its page count, and authorizes payment. The customer is charged only if remediation completes, and then receives a remediated PDF plus a machine-readable and human-readable processing report. If remediation fails, the hold is released and the customer receives a failure report instead. The MVP uses Mistral OCR 4.1 for page and document understanding, a vendor-neutral accessibility intermediate representation (IR), PDFix Enterprise to modify the original PDF, and veraPDF to validate machine-verifiable PDF/UA requirements. The service reports validation and confidence results but does not promise that automated output is fully ADA, WCAG, or PDF/UA conformant without human review.
 
 ## 2. Problem Statement
 
@@ -25,14 +25,14 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 - Accept one customer PDF per order.
 - Determine and display the page count before payment.
 - Calculate the order amount as `page count × configured price per page`.
-- Collect payment before starting paid remediation.
+- Place a payment Authorization before starting paid remediation, Capture it only when the Job is Completed, and Release it otherwise (ADR 0002).
 - Preserve the original visible page content.
 - Support born-digital, scanned, and mixed PDFs through a page-aware processing pipeline.
 - Use Mistral OCR 4.1 to identify text blocks, structural labels, geometry, confidence, and reading order.
 - Normalize model output into a vendor-neutral accessibility IR owned by the product.
 - Use PDFix Enterprise to add or modify accessibility information in the original PDF.
 - Validate the output with veraPDF.
-- Return the remediated PDF and a report that distinguishes technical validation, visual preservation, semantic confidence, and manual-review recommendations.
+- Deliver the remediated PDF only when it passes both Visual preservation and veraPDF validation, with a report that distinguishes technical validation, visual preservation, per-Element confidence, and manual-review recommendations.
 - Record enough stage-level data to diagnose failures without logging customer document content.
 
 ### Non-Goals
@@ -55,12 +55,13 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 |---|---|---|
 | SC-01 | A customer can complete the primary path. | Upload, quote, payment, processing, report, and download succeed in an end-to-end test. |
 | SC-02 | Pricing is deterministic. | For every accepted test file, displayed subtotal equals persisted page count multiplied by the active per-page price in cents. |
-| SC-03 | Unpaid jobs do not consume paid remediation services. | No Mistral or PDFix stage begins until the payment record is in `Paid` state. |
+| SC-03 | Unauthorized jobs do not consume paid remediation services. | No Mistral or PDFix stage begins until the payment record is in `Authorized` state. |
 | SC-04 | Visible content is preserved. | Input and output pages rendered by the same renderer at the same resolution produce a pixel mismatch ratio of `0.0000`; any non-zero result is reported and prevents a `Completed` status. |
-| SC-05 | Technical validation is reported honestly. | Every completed job includes the veraPDF profile, pass/fail result, rule-failure count, and raw report artifact. |
+| SC-05 | Technical validation is reported honestly. | Every job that reaches validation records the veraPDF profile, pass/fail result, rule-failure count, Repair passes used, and raw report file; no job with remaining Validation failures becomes `Completed`. |
 | SC-06 | Low-confidence work is visible. | Every block below the configured confidence threshold creates a review item with page number, type, and confidence. |
 | SC-07 | Variable OCR cost is observable. | Each completed Mistral stage records pages submitted and estimated OCR cost using the configured provider rate; the source baseline is `$0.004/page`. |
-| SC-08 | Failure handling is testable. | Automated tests cover invalid PDF, payment failure, Mistral timeout, PDFix failure, veraPDF failure, and unavailable download. |
+| SC-08 | Failure handling is testable. | Automated tests cover invalid, encrypted, and signed PDFs, authorization failure, Mistral timeout, PDFix failure, veraPDF failure after Repair passes, authorization-expiry release, cancellation, and unavailable download. |
+| SC-11 | Customers are never charged for undelivered output. | Every `Failed` or `Cancelled` job ends with its Authorization `Released` and no Capture. |
 | SC-09 | The customer interface is accessible. | MVP screens pass automated WCAG 2.1 AA checks and a documented keyboard-only test of the primary path. |
 | SC-10 | The eight-week release is supportable. | A new operator can use the runbook to identify a failed stage, retry an eligible job, or issue the documented manual fallback within 15 minutes. `[ASSUMPTION]` |
 
@@ -68,22 +69,22 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 | Role | Capabilities | Permission boundaries |
 |---|---|---|
-| Customer | Create an account, upload one PDF, view its quote, pay, view job status, download owned artifacts, and delete owned files before automatic expiration. `[ASSUMPTION]` | Can access only records and files linked to their own user ID. Cannot change prices, retry internal stages, see provider payloads, or access another customer's order. |
-| Service Operator | View all jobs, stage status, non-content error summaries, validation results, and audit events; retry eligible failed jobs; mark a job for refund handling. `[ASSUMPTION]` | Cannot view payment credentials. Document download access is disabled by default and requires a separately logged support action. `[ASSUMPTION]` |
-| Service Administrator | All operator capabilities plus configure price per page, confidence threshold, file limits, retention period, and integration enablement. `[ASSUMPTION]` | Cannot alter the amount or page count of an already-created quote. Cannot mark a payment as paid without a verified provider event. |
-| Background Worker | Read paid queued jobs, access source artifacts, call processing integrations, write derived artifacts, and update stage status. `[ASSUMPTION]` | Has no interactive login and no ability to change pricing or user data. |
+| Customer | One person's account. Create an account, upload one PDF, view its quote, authorize payment, cancel a still-queued job, view job status, download owned files, and delete owned files before automatic expiration. `[ASSUMPTION]` | Can access only records and files linked to their own user ID. Cannot change prices, retry internal stages, see provider payloads, or access another customer's order. |
+| Service Operator | View all jobs, stage status, non-content error summaries, validation results, and audit events; retry eligible failed jobs; issue the rare post-Capture Refund manually in the payment provider. `[ASSUMPTION]` | Cannot view payment credentials. Document download access is disabled by default and requires a separately logged support action. `[ASSUMPTION]` |
+| Service Administrator | All operator capabilities plus configure price per page, confidence threshold, file limits, retention period, and integration enablement. `[ASSUMPTION]` | Cannot alter the amount or page count of an already-created quote. Cannot mark a payment as authorized or captured without a verified provider event. |
+| Background Worker | Read Authorized queued jobs, access source files, call processing integrations, write derived files, and update stage status. `[ASSUMPTION]` | Has no interactive login and no ability to change pricing or user data. |
 
 ## 6. Scope
 
 | Area | MVP | Phase 2 | Explicitly Out of Scope |
 |---|---|---|---|
-| Customer workflow | Account, single PDF upload, page-count quote, payment, status, report, download | Saved payment methods, order history filters, organization accounts | Anonymous public processing `[ASSUMPTION]` |
+| Customer workflow | Individual account, single PDF upload, page-count quote, payment authorization, cancel while queued, status, report, download | Saved payment methods, order history filters, organization accounts | Anonymous public processing `[ASSUMPTION]` |
 | Pricing | One configurable per-page price; one currency `[ASSUMPTION]` | Volume tiers, contracts, coupons, tax calculation, minimum charges | Negotiated enterprise billing in the MVP |
-| Document input | Born-digital, scanned, and mixed PDFs; one file per order | Batch ZIP, portfolio PDFs, public API | Non-PDF input |
+| Document input | Born-digital, scanned, and mixed PDFs; one file per order; fillable forms accepted but fields left unremediated | Batch ZIP, portfolio PDFs, public API, form-field remediation | Non-PDF input; password-protected, permission-restricted, or digitally signed PDFs |
 | Understanding | Mistral OCR 4.1 blocks, labels, confidence, and reading order | GLM-OCR, PaddleOCR-VL, Docling, MinerU, ensemble routing | LayoutParser-based primary pipeline |
 | Remediation | PDFix Enterprise applied to the original PDF | Compare PDFix, Apryse, and Foxit; optional PDFBox engine | Rebuilding pages from HTML or Markdown |
 | Validation | veraPDF, custom confidence rules, pixel comparison | Adobe checker, PAC-assisted QA, semantic second-pass model, NVDA/JAWS test service | Claiming machine validation replaces human review |
-| Accessibility structures | Headings, paragraphs, lists, tables, figures, artifacts, reading order, document title/language when the IR provides them | Interactive corrections, advanced formula/MathML review, table repair UI | Human-authored remediation in the MVP |
+| Accessibility structures | Headings, paragraphs, lists, tables, figures with model-drafted alt text, artifacts, reading order, document title/language when the IR provides them; existing tag trees are replaced (ADR 0001) | Interactive corrections, advanced formula/MathML review, table repair UI | Human-authored remediation in the MVP |
 | Service tiers | Automated remediation | Complex-document pricing, verified human review, bulk/API, government annual plans | Human review bundled into every MVP order |
 | Operations | Single deployment with one or more licensed workers `[ASSUMPTION]` | Autoscaling and multi-region operation | Unlicensed elastic PDFix worker creation |
 
@@ -114,11 +115,13 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 **Acceptance criteria**
 
-1. **Given** an authenticated customer selects a valid PDF within configured limits, **when** upload completes, **then** the application creates a document record, stores the original artifact, and starts preflight.
+1. **Given** an authenticated customer selects a valid PDF within configured limits, **when** upload completes, **then** the application creates a document record, stores the original file, and starts preflight.
 2. **Given** a file extension is not `.pdf`, **when** upload is attempted, **then** the application rejects it before storage and explains that only PDF files are accepted.
 3. **Given** a file is named `.pdf` but does not begin with a valid PDF signature or cannot be parsed, **when** preflight runs, **then** the document is marked `Rejected`, no quote is created, and the customer sees a non-technical error.
 4. **Given** a PDF exceeds either the configured byte or page limit, **when** preflight runs, **then** the document is marked `Rejected`, no paid processing begins, and the actual and allowed limits are shown.
 5. **Given** preflight cannot read page count, **when** the parser fails, **then** the customer sees a retry option and no amount is charged.
+6. **Given** a PDF is password-protected, permission-restricted, or digitally signed, **when** preflight runs, **then** the document is marked `Rejected`, no quote is created, and the customer is told why (for a signed PDF: remediation would invalidate the signature).
+7. **Given** preflight runs, **when** it finishes, **then** it has performed no rendering, OCR, or other processing beyond what is needed to validate the file and count its pages.
 
 #### US-03 — Review a page-count quote
 
@@ -136,40 +139,58 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 ### 7.3 Payment
 
-#### US-04 — Pay for an order
+#### US-04 — Authorize payment for an order
 
-*As a customer, I want to pay the quoted amount, so that remediation can start.*
+*As a customer, I want to commit to the quoted amount and be charged only if I receive a remediated PDF, so that remediation can start without risk of paying for nothing.*
 
-**Depends on:** FR-09, FR-10, FR-11, FR-12
+**Depends on:** FR-09, FR-10, FR-11, FR-12, FR-40
 
 **Acceptance criteria**
 
-1. **Given** an unexpired unpaid quote, **when** the customer selects pay, **then** the application creates one payment-provider checkout for the exact stored amount and currency.
-2. **Given** the payment provider sends a valid signed success event, **when** the event is processed, **then** the payment becomes `Paid`, an order is created or confirmed, and exactly one remediation job is queued.
+1. **Given** an unexpired open quote, **when** the customer selects pay, **then** the application creates one payment-provider checkout for the exact stored amount and currency, using manual capture and offering only payment methods that support holds.
+2. **Given** the payment provider sends a valid signed authorization event, **when** the event is processed, **then** the payment becomes `Authorized`, its authorization expiry is recorded, and exactly one remediation job is queued.
 3. **Given** the customer returns from checkout before the provider event arrives, **when** the status page loads, **then** it displays `Confirming payment` and does not start remediation.
-4. **Given** payment is cancelled or declined, **when** the customer returns, **then** the quote remains unpaid, no remediation job starts, and the customer can retry payment while the quote is valid.
-5. **Given** the same valid provider event is delivered more than once, **when** later copies are processed, **then** no duplicate charge record, order, or remediation job is created.
+4. **Given** payment is cancelled or declined, **when** the customer returns, **then** the quote remains open, no remediation job starts, and the customer can retry payment while the quote is valid.
+5. **Given** the same valid provider event is delivered more than once, **when** later copies are processed, **then** no duplicate payment record, capture, or remediation job is created.
 6. **Given** a provider event has an invalid signature or mismatched amount/currency, **when** it is received, **then** the event is rejected, no job is queued, and an operator alert is recorded.
+7. **Given** a job becomes `Completed`, **when** completion commits, **then** the Authorization is Captured exactly once.
+8. **Given** a job becomes `Failed` or `Cancelled`, **when** the terminal state commits, **then** the Authorization is Released and nothing is captured.
 
 ### 7.4 Remediation Processing
 
-#### US-05 — Process a paid PDF
+#### US-05 — Process an authorized PDF
 
-*As a customer, I want my paid PDF processed without changing its visible pages, so that I receive a more accessible version of the same document.*
+*As a customer, I want my PDF processed once payment is authorized without changing its visible pages, so that I receive a more accessible version of the same document.*
 
-**Depends on:** FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19
+**Depends on:** FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-41, FR-42, FR-43, FR-44
 
 **Acceptance criteria**
 
-1. **Given** a payment is `Paid` and no job exists for the order, **when** the queue action commits, **then** one job enters `Queued` state.
+1. **Given** a payment is `Authorized` and no job exists for the quote, **when** the queue action commits, **then** one job enters `Queued` state.
 2. **Given** a queued job, **when** a worker claims it, **then** only that worker can execute the current attempt and the job moves to `Preprocessing`.
-3. **Given** a born-digital page, **when** preprocessing completes, **then** the system retains native text/object references and produces a page render for model analysis.
-4. **Given** an image-only page, **when** preprocessing completes, **then** the system marks the page as scanned and prepares it for OCR text-layer and tag generation.
-5. **Given** a mixed PDF, **when** preprocessing completes, **then** classification is stored per page rather than once for the whole document.
+3. **Given** native text and graphic Source objects, **when** preprocessing completes, **then** the system retains their references and produces page renders for model analysis.
+4. **Given** image-only Source objects (such as a scanned page), **when** preprocessing completes, **then** the system prepares those regions for OCR text-layer and tag generation.
+5. **Given** preprocessing completes, **when** the job record is updated, **then** it stores one descriptive Document classification (`born-digital`, `scanned`, or `mixed`) derived from the Source objects; the classification does not change price or processing route.
 6. **Given** preprocessing succeeds, **when** Mistral is called, **then** block geometry, text, reading order, labels, and available confidence values are normalized into the IR.
 7. **Given** the IR is valid, **when** PDFix remediation runs, **then** it edits accessibility structures in a copy of the original PDF and does not regenerate visible pages.
 8. **Given** a provider or worker timeout occurs, **when** the attempt ends, **then** the stage is recorded as transiently failed and retried according to INT-01 or INT-02 without creating another charge.
-9. **Given** the IR cannot be mapped to source objects or PDFix reports an unrecoverable file error, **when** remediation stops, **then** the job becomes `Failed`, the original file remains unchanged, and the customer sees that no output was produced.
+9. **Given** the IR cannot be mapped to source objects or PDFix reports an unrecoverable file error, **when** remediation stops, **then** the job becomes `Failed`, the original file remains unchanged, the Authorization is Released, and the customer receives a Failure report.
+10. **Given** the input already has a structure tree, **when** PDFix remediation runs, **then** the existing tree is replaced from the IR and the report records that the original was tagged (ADR 0001).
+11. **Given** an informative Figure, **when** the IR is built, **then** alt text is drafted by the model and a Review item of type `AltText` is created for it.
+12. **Given** a page has fillable form fields, **when** remediation runs, **then** the fields are left unchanged and a Review item of type `FormField` is created for that page.
+13. **Given** a job is not `Completed` 24 hours before its Authorization expires, **when** the expiry check runs, **then** the job becomes `Failed` with category `processing_timeout`, and the Authorization is Released. `[ASSUMPTION]`
+
+#### US-12 — Cancel a queued job
+
+*As a customer, I want to cancel a job that has not started processing, so that I am not charged if I change my mind.*
+
+**Depends on:** FR-45
+
+**Acceptance criteria**
+
+1. **Given** a job is `Queued`, **when** the customer cancels it, **then** the job becomes `Cancelled`, the Authorization is Released, and no paid stage runs.
+2. **Given** a job has entered `Preprocessing` or a later state, **when** the customer views it, **then** no cancel action is offered and a direct cancel request is rejected without changing the job.
+3. **Given** a worker claims the job and the customer cancels at the same moment, **when** both commit, **then** exactly one wins: the job is either `Cancelled` with no stage started, or processing continues and cancellation is rejected.
 
 #### US-06 — Track job status
 
@@ -183,7 +204,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 2. **Given** a stage changes, **when** the client refreshes or polls within 15 seconds, **then** the displayed status matches the persisted customer-facing status. `[ASSUMPTION]`
 3. **Given** no jobs exist, **when** the customer opens the dashboard, **then** an empty state links to upload.
 4. **Given** status retrieval fails, **when** the page cannot load current data, **then** the last known state is not presented as current and a retry control is shown.
-5. **Given** a job fails, **when** the status page loads, **then** it displays a customer-safe failure category, payment/refund handling status, and support reference ID without exposing stack traces or provider secrets.
+5. **Given** a job fails, **when** the status page loads, **then** it displays the Failure report (customer-safe failure categories with page numbers), confirmation that the payment hold was Released, and a support reference ID, without exposing stack traces or provider secrets.
 
 ### 7.5 Validation and Results
 
@@ -191,18 +212,22 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 *As a customer, I want to understand what automation verified and what still needs review, so that I do not mistake an automated result for a compliance guarantee.*
 
-**Depends on:** FR-24, FR-25, FR-26, FR-27
+A job is `Completed` only when its output passes both Visual preservation and veraPDF validation. A Completed job carries a Result verdict of `Manual review recommended` or `Automated checks passed`.
+
+**Depends on:** FR-24, FR-25, FR-26, FR-27, FR-39, FR-46
 
 **Acceptance criteria**
 
-1. **Given** PDFix produces an output PDF, **when** veraPDF validation completes, **then** the report records the validation profile, pass/fail status, and every reported rule failure.
-2. **Given** input and output renders are compared, **when** any pixel differs, **then** visual preservation is `Fail`, the job does not become `Completed`, and the output is not offered as a completed result.
-3. **Given** any IR element is below the configured confidence threshold, **when** the report is built, **then** it lists a review item with page number, element type, confidence, and reason.
-4. **Given** veraPDF passes and visual preservation passes, **when** semantic review items remain, **then** the result says `Manual review recommended` rather than `Compliant`.
-5. **Given** veraPDF fails, **when** the report is shown, **then** the customer can see the number and categories of technical failures and the output is labeled `Validation failed`.
-6. **Given** no review items exist, **when** the report is shown, **then** it still states that automated checks do not guarantee ADA, WCAG, or PDF/UA compliance.
+1. **Given** PDFix produces an output PDF, **when** veraPDF validation completes, **then** the system records the validation profile, pass/fail status, and every reported rule failure.
+2. **Given** input and output renders are compared, **when** any pixel differs, **then** Visual preservation fails, the job becomes `Failed`, the Authorization is Released, and no output is offered.
+3. **Given** veraPDF reports Validation failures, **when** Repair passes remain (maximum 3), **then** the next Repair pass runs, escalating from targeted fix-ups to structural fallbacks to re-analysis of affected pages, and is recorded as an Attempt. `[ASSUMPTION]`
+4. **Given** a Repair pass applies a structural fallback (for example a table simplified to paragraphs), **when** the report is built, **then** a Review item of type `StructuralFallback` records what was simplified and where.
+5. **Given** Validation failures remain after the last Repair pass, **when** the job closes, **then** it becomes `Failed`, the Authorization is Released, and the customer receives a Failure report listing the categories and pages that could not be fixed. No PDF is offered.
+6. **Given** any IR Element is below the job's confidence threshold, **when** the report is built, **then** it lists a Review item with page number, element type, confidence, and reason. No document-level confidence score is produced.
+7. **Given** a job is `Completed` and Review items exist, **when** the report is shown, **then** the Result verdict is `Manual review recommended`, never `Compliant`.
+8. **Given** a job is `Completed` with no Review items, **when** the report is shown, **then** the Result verdict is `Automated checks passed` and the report still states that automated checks do not guarantee ADA, WCAG, or PDF/UA compliance.
 
-#### US-08 — Download result artifacts
+#### US-08 — Download result files
 
 *As a customer, I want to download the remediated PDF and report, so that I can review and publish the result.*
 
@@ -211,9 +236,9 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 **Acceptance criteria**
 
 1. **Given** a job is `Completed`, **when** the customer selects download PDF, **then** the application authorizes ownership and returns the remediated PDF with a safe filename and `application/pdf` content type.
-2. **Given** a report exists, **when** the customer selects download report, **then** the application returns JSON containing the job summary, validation summary, visual-diff result, confidence summary, and review items.
-3. **Given** the artifact retention date has passed, **when** the customer requests a download, **then** the application returns `410 Gone`, explains that the file expired, and does not expose the storage path.
-4. **Given** an artifact record exists but its file is missing, **when** download is requested, **then** the application returns a customer-safe error, records an operational error, and does not mark the job as newly failed.
+2. **Given** a report exists, **when** the customer selects download report, **then** the application returns JSON containing the job summary, Result verdict or failure categories, validation summary, visual-diff result, and Review items.
+3. **Given** the file retention date has passed, **when** the customer requests a download, **then** the application returns `410 Gone`, explains that the file expired, and does not expose the storage path.
+4. **Given** an stored file record exists but its file is missing, **when** download is requested, **then** the application returns a customer-safe error, records an operational error, and does not mark the job as newly failed.
 5. **Given** an incomplete or failed job, **when** the customer requests a remediated PDF URL directly, **then** the application returns `404`.
 
 ### 7.6 Failure Recovery and Operations
@@ -227,9 +252,10 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 **Acceptance criteria**
 
 1. **Given** a job failed with a retryable category and has attempts remaining, **when** an operator selects retry, **then** a new stage attempt is queued against the same job and order.
-2. **Given** a job failed due to invalid input, an IR validation error, or a visual-diff failure, **when** the operator opens the job, **then** retry is disabled unless the underlying implementation or configuration changed and the operator records a reason. `[ASSUMPTION]`
+2. **Given** a job failed due to invalid input, an IR validation error, a visual-diff failure, or Validation failures remaining after the last Repair pass, **when** the operator opens the job, **then** retry is disabled unless the underlying implementation or configuration changed and the operator records a reason. `[ASSUMPTION]`
 3. **Given** the retry action is submitted twice, **when** both requests are handled, **then** at most one active retry attempt is created.
-4. **Given** all retry attempts fail, **when** the last attempt closes, **then** the job remains `Failed`, the customer sees the failure state, and refund handling is flagged for manual action.
+4. **Given** all retry attempts fail, **when** the last attempt closes, **then** the job remains `Failed`, the Authorization is Released, and the customer sees the Failure report.
+5. **Given** an operator retry would finish after the Authorization's safety margin, **when** the operator opens the job, **then** retry is disabled and the job is Failed and Released instead. `[ASSUMPTION]`
 
 #### US-10 — Configure commercial and processing settings
 
@@ -271,35 +297,43 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | FR-07 | The system shall calculate quote total in integer minor currency units as `page count × unit price`. | US-03 |
 | FR-08 | The system shall store the quote's page count, unit price, currency, total, creation time, and expiration time so later price changes do not alter it. `[ASSUMPTION]` | US-03 |
 | FR-09 | The system shall create payment checkout only for an unexpired unpaid quote. | US-04 |
-| FR-10 | The system shall treat a signed payment-provider event, not the browser return, as payment confirmation. `[ASSUMPTION]` | US-04 |
+| FR-10 | The system shall treat a signed payment-provider event, not the browser return, as confirmation of Authorization. `[ASSUMPTION]` | US-04 |
 | FR-11 | The system shall reject payment events with invalid signature, unknown provider ID, duplicate event ID, or mismatched amount/currency. `[ASSUMPTION]` | US-04 |
-| FR-12 | The system shall create at most one remediation job per paid order. | US-04 |
-| FR-13 | The system shall start Mistral or PDFix processing only after the related payment status is `Paid`. | US-05 |
-| FR-14 | The system shall classify each page as born-digital, scanned, or mixed before semantic processing. `[ASSUMPTION]` | US-05 |
+| FR-12 | The system shall create at most one remediation job per Authorized quote. | US-04 |
+| FR-13 | The system shall start Mistral or PDFix processing only after the related payment status is `Authorized`. | US-05 |
+| FR-14 | The system shall decide OCR per Source object (native text kept, image-only regions OCR'd) and record one descriptive Document classification (`born-digital`, `scanned`, or `mixed`) during preprocessing. `[ASSUMPTION]` | US-05 |
 | FR-15 | The system shall render each input page at one configured resolution using one pinned renderer version for later model input and visual comparison. `[ASSUMPTION]` | US-05 |
 | FR-16 | The system shall submit page content to Mistral OCR 4.1 and request block-level output that includes available text, labels, bounding boxes, reading order, and confidence. | US-05 |
 | FR-17 | The system shall normalize Mistral output into the Accessibility IR and shall validate the IR against a versioned schema before PDFix execution. | US-05 |
 | FR-18 | The system shall preserve native text/object references for born-digital content and shall use OCR-derived accessible text only for image-only regions. | US-05 |
 | FR-19 | The system shall use PDFix Enterprise to modify a copy of the original PDF's accessibility structures rather than recreate visible pages. | US-05 |
-| FR-20 | The system shall reject files outside configured byte or page limits before payment. `[ASSUMPTION]` | US-02 |
+| FR-20 | The system shall reject files outside configured byte or page limits, and password-protected, permission-restricted, or digitally signed files, before payment, without rendering or OCR. `[ASSUMPTION]` | US-02 |
 | FR-21 | The system shall isolate customer data by user and use non-sequential public identifiers. `[ASSUMPTION]` | US-01 |
-| FR-22 | The system shall map internal stages to customer-facing states: `Queued`, `Analyzing`, `Remediating`, `Validating`, `Preparing results`, `Completed`, or `Failed`. `[ASSUMPTION]` | US-06 |
+| FR-22 | The system shall map internal stages to customer-facing states: `Queued`, `Analyzing`, `Remediating`, `Validating`, `Preparing results`, `Completed`, `Failed`, or `Cancelled`. `[ASSUMPTION]` | US-06 |
 | FR-23 | The system shall make persisted job status available to the owner without exposing provider payloads or stack traces. | US-06 |
 | FR-24 | The system shall run veraPDF against every PDFix output before completion. | US-07 |
 | FR-25 | The system shall render and compare every input and output page with identical settings and record pixel mismatch count and ratio. | US-07 |
-| FR-26 | The system shall create review items for IR elements below the job's stored confidence threshold and for validation failures. | US-07 |
+| FR-26 | The system shall create Review items for IR Elements below the job's stored confidence threshold, drafted alt text, structural fallbacks, and pages with form fields. Validation failures are reported separately, not as Review items. | US-07 |
 | FR-27 | The system shall never label an automated output `ADA compliant`, `WCAG compliant`, or `PDF/UA compliant` solely because automated checks pass. | US-07 |
-| FR-28 | The system shall provide the owner a downloadable remediated PDF only after technical validation and visual comparison finish. | US-08 |
+| FR-28 | The system shall provide the owner a downloadable remediated PDF only for a `Completed` job, meaning it passed both veraPDF validation and Visual preservation. | US-08 |
 | FR-29 | The system shall provide the owner a downloadable JSON processing report. | US-08 |
-| FR-30 | The system shall stop downloads after the artifact expiration timestamp and shall delete expired artifact bytes through a scheduled cleanup process. `[ASSUMPTION]` | US-08 |
+| FR-30 | The system shall stop downloads after the file expiration timestamp and shall delete expired file bytes through a scheduled cleanup process. `[ASSUMPTION]` | US-08 |
 | FR-31 | The system shall classify failures as retryable or non-retryable. `[ASSUMPTION]` | US-09 |
 | FR-32 | The system shall prevent more than one active processing attempt for the same stage and job. `[ASSUMPTION]` | US-09 |
 | FR-33 | The system shall allow an operator to retry eligible failures without creating a new order or charge. `[ASSUMPTION]` | US-09 |
 | FR-34 | The system shall allow an administrator to configure a positive whole-cent price per page and one ISO 4217 currency. `[ASSUMPTION]` | US-10 |
 | FR-35 | The system shall snapshot active processing settings onto a job when the job is queued. `[ASSUMPTION]` | US-10 |
-| FR-36 | The system shall expose health state for the database, artifact storage, payment adapter, Mistral adapter, PDFix worker, and veraPDF executable without exposing secrets. `[ASSUMPTION]` | US-10 |
+| FR-36 | The system shall expose health state for the database, file storage, payment adapter, Mistral adapter, PDFix worker, and veraPDF executable without exposing secrets. `[ASSUMPTION]` | US-10 |
 | FR-37 | The system shall create append-only audit events for security, commercial, processing, download, retry, configuration, and deletion actions. `[ASSUMPTION]` | US-11 |
 | FR-38 | The system shall assign one correlation ID to each request and carry the job correlation ID through background stages and integration calls. `[ASSUMPTION]` | US-11 |
+| FR-39 | The system shall run up to 3 Repair passes when veraPDF reports Validation failures, escalating from targeted fix-ups to structural fallbacks to re-analysis, and fail the job if failures remain. `[ASSUMPTION]` | US-07 |
+| FR-40 | The system shall Capture the Authorization only when a job becomes `Completed`, and Release it when a job becomes `Failed` or `Cancelled`. | US-04 |
+| FR-41 | The system shall Release the Authorization and fail any job not `Completed` 24 hours before the Authorization expires. `[ASSUMPTION]` | US-05 |
+| FR-42 | The system shall replace any existing structure tree in the input with one built from the IR, and record in the report that the input was previously tagged. | US-05 |
+| FR-43 | The system shall draft alt text for informative Figures with the document-understanding model and never mark a Figure decorative to avoid a validation failure. | US-05 |
+| FR-44 | The system shall accept PDFs with fillable form fields, leave the fields unchanged, and raise a Review item for each page that has them. | US-05 |
+| FR-45 | The system shall let the owner cancel a job only while it is `Queued`. | US-12 |
+| FR-46 | The system shall produce a customer-safe Failure report, with failure categories and page numbers, for every `Failed` job. | US-06, US-07 |
 
 ## 9. Data Model
 
@@ -310,8 +344,8 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | DR-01 | All primary keys shall be UUIDs generated by the application or database. `[ASSUMPTION]` |
 | DR-02 | All timestamps shall be stored as UTC with timezone-aware database types. `[ASSUMPTION]` |
 | DR-03 | Monetary amounts shall be stored as integer minor units; floating-point types are prohibited. `[ASSUMPTION]` |
-| DR-04 | Original PDF, rendered pages, Accessibility IR, remediated PDF, raw validator output, and customer report shall be stored as artifacts outside relational row data. `[ASSUMPTION]` |
-| DR-05 | Artifact rows shall store SHA-256, byte length, media type, storage key, creation time, and expiration time. `[ASSUMPTION]` |
+| DR-04 | Original PDF, rendered pages, Accessibility IR, remediated PDF, raw validator output, and customer report shall be stored as Stored files outside relational row data. `[ASSUMPTION]` |
+| DR-05 | Stored file rows shall store SHA-256, byte length, media type, storage key, creation time, and expiration time. `[ASSUMPTION]` |
 | DR-06 | The Accessibility IR shall include a schema version and stable element IDs. |
 | DR-07 | Each IR element shall support page, semantic type, bounding box, reading order, text when applicable, confidence when available, source-object references when available, parent ID, and semantic properties. |
 | DR-08 | Table IR shall support rows, columns, `TH`/`TD`, header scope, row span, and column span. |
@@ -320,6 +354,8 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | DR-11 | Payment-provider secrets and full payment instrument data shall never be stored in the application database. `[ASSUMPTION]` |
 | DR-12 | Audit events shall be append-only to application roles; corrections shall be new events. `[ASSUMPTION]` |
 | DR-13 | Jobs, quotes, and payments shall retain the exact configuration values used for their execution. `[ASSUMPTION]` |
+| DR-14 | Deleting a Document shall delete all its Stored files and its original filename immediately, while Quote, Payment, Refund, and audit records are retained without document content. |
+| DR-15 | "Order" is customer-facing language for an Authorized Quote; there is no separate Order entity. |
 
 ### 9.2 Entities and fields
 
@@ -339,13 +375,13 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 |---|---|---:|---|
 | `Id` | UUID | No | Primary key and public non-sequential ID. |
 | `OwnerUserId` | UUID | No | Foreign key to `User`. |
-| `OriginalArtifactId` | UUID | Yes | Required after upload succeeds. |
-| `OriginalFileName` | string(255) | No | Strip path components and control characters. `[ASSUMPTION]` |
+| `OriginalFileId` | UUID | Yes | Required after upload succeeds. |
+| `OriginalFileName` | string(255) | Yes | Strip path components and control characters. Cleared on deletion. `[ASSUMPTION]` |
 | `Sha256` | char(64) | Yes | Lowercase hexadecimal after storage. |
 | `ByteLength` | long | Yes | Positive. |
 | `PageCount` | int | Yes | Positive after preflight. |
 | `PreflightStatus` | enum | No | `Uploaded`, `Inspecting`, `Accepted`, `Rejected`, `Failed`. |
-| `RejectionCode` | string(50) | Yes | Required when status is `Rejected`. |
+| `RejectionCode` | string(50) | Yes | Required when status is `Rejected`; includes `encrypted`, `restricted`, and `signed`. |
 | `CreatedAtUtc` | timestamp | No | Set once. |
 | `ExpiresAtUtc` | timestamp | No | Derived from active retention setting. `[ASSUMPTION]` |
 
@@ -359,7 +395,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `UnitPriceMinor` | int | No | Positive whole number. |
 | `Currency` | char(3) | No | ISO 4217 uppercase. `[ASSUMPTION]` |
 | `TotalMinor` | long | No | Must equal page count × unit price. |
-| `Status` | enum | No | `Open`, `CheckoutPending`, `Paid`, `Expired`, `Cancelled`. |
+| `Status` | enum | No | `Open`, `CheckoutPending`, `Ordered`, `Expired`, `Cancelled`. `Ordered` means an Authorization exists. |
 | `CreatedAtUtc` | timestamp | No | Set once. |
 | `ExpiresAtUtc` | timestamp | No | Later than creation. |
 
@@ -374,29 +410,27 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `ProviderPaymentId` | string(255) | Yes | Unique when present. |
 | `AmountMinor` | long | No | Must equal quote total. |
 | `Currency` | char(3) | No | Must equal quote currency. |
-| `Status` | enum | No | `Pending`, `Paid`, `Failed`, `RefundPending`, `Refunded`. |
-| `PaidAtUtc` | timestamp | Yes | Required only for paid/refund states. |
+| `Status` | enum | No | `Pending`, `Authorized`, `Captured`, `Released`, `Failed`, `Refunded`. |
+| `AuthorizedAtUtc` | timestamp | Yes | Required from `Authorized` onward. |
+| `AuthorizationExpiresAtUtc` | timestamp | Yes | From the provider; drives the release deadline (FR-41). |
+| `CapturedAtUtc` | timestamp | Yes | Required for `Captured` and `Refunded`. |
+| `ReleasedAtUtc` | timestamp | Yes | Required for `Released`. |
 | `LastProviderEventId` | string(255) | Yes | Used with provider-event table or unique constraint for idempotency. `[ASSUMPTION]` |
-
-#### `Order`
-
-| Field | Type | Null | Rules |
-|---|---|---:|---|
-| `Id` | UUID | No | Primary key. |
-| `QuoteId` | UUID | No | Unique foreign key. |
-| `PaymentId` | UUID | No | Unique foreign key to paid payment. |
-| `OwnerUserId` | UUID | No | Denormalized authorization key. `[ASSUMPTION]` |
-| `CreatedAtUtc` | timestamp | No | Created only after confirmed payment. |
 
 #### `RemediationJob`
 
 | Field | Type | Null | Rules |
 |---|---|---:|---|
 | `Id` | UUID | No | Primary key and support reference. |
-| `OrderId` | UUID | No | Unique foreign key; one job per order. |
+| `QuoteId` | UUID | No | Unique foreign key; one job per Authorized quote. |
+| `PaymentId` | UUID | No | Unique foreign key to the Authorized payment. |
+| `OwnerUserId` | UUID | No | Denormalized authorization key. `[ASSUMPTION]` |
 | `DocumentId` | UUID | No | Foreign key. |
 | `Status` | enum | No | Internal state machine defined below. |
-| `CurrentStage` | enum | Yes | `Preflight`, `Render`, `Ocr`, `NormalizeIr`, `Remediate`, `Validate`, `VisualDiff`, `Report`. |
+| `CurrentStage` | enum | Yes | `Render`, `Ocr`, `NormalizeIr`, `Remediate`, `Validate`, `Repair`, `VisualDiff`, `Report`. Preflight is a Document concern, not a job stage. |
+| `DocumentClassification` | enum | Yes | `BornDigital`, `Scanned`, `Mixed`; set during preprocessing; descriptive only. |
+| `InputWasTagged` | bool | Yes | Set during preprocessing; reported per ADR 0001. |
+| `RepairPassesUsed` | int | No | `0–3`. `[ASSUMPTION]` |
 | `IrSchemaVersion` | string(20) | No | Example: `1.0`. `[ASSUMPTION]` |
 | `ConfidenceThreshold` | decimal(5,4) | No | Range `0.0000–1.0000`; snapshot. |
 | `RenderDpi` | int | No | Snapshot; default pending OQ-10. |
@@ -408,7 +442,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `StartedAtUtc` | timestamp | Yes | First worker claim. |
 | `CompletedAtUtc` | timestamp | Yes | Terminal state only. |
 
-**Internal job states:** `Queued`, `Preprocessing`, `OcrRunning`, `IrReady`, `Remediating`, `Validating`, `Comparing`, `Reporting`, `Completed`, `Failed`, `Cancelled`.
+**Internal job states:** `Queued`, `Preprocessing`, `OcrRunning`, `IrReady`, `Remediating`, `Validating`, `Repairing`, `Comparing`, `Reporting`, `Completed`, `Failed`, `Cancelled`. `Cancelled` is reachable only from `Queued`.
 
 #### `JobStageAttempt`
 
@@ -425,14 +459,14 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `StartedAtUtc` | timestamp | Yes | UTC. |
 | `EndedAtUtc` | timestamp | Yes | UTC. |
 
-#### `Artifact`
+#### `StoredFile`
 
 | Field | Type | Null | Rules |
 |---|---|---:|---|
 | `Id` | UUID | No | Primary key. |
 | `DocumentId` | UUID | No | Foreign key. |
 | `JobId` | UUID | Yes | Null for original upload. |
-| `Kind` | enum | No | `OriginalPdf`, `PageRender`, `AccessibilityIr`, `RemediatedPdf`, `VeraPdfReport`, `VisualDiff`, `CustomerReport`. |
+| `Kind` | enum | No | `OriginalPdf`, `PageRender`, `AccessibilityIr`, `RemediatedPdf`, `VeraPdfReport`, `VisualDiff`, `CustomerReport`, `FailureReport`. |
 | `StorageKey` | string(1024) | No | Unique; never sent to customers. |
 | `MediaType` | string(100) | No | Required. |
 | `ByteLength` | long | No | Non-negative. |
@@ -450,7 +484,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `Profile` | string(100) | No | Exact configured veraPDF profile. |
 | `Passed` | bool | No | Machine-verifiable result only. |
 | `FailureCount` | int | No | Non-negative. |
-| `RawReportArtifactId` | UUID | No | Foreign key to artifact. |
+| `RawReportFileId` | UUID | No | Foreign key to `StoredFile`. |
 | `VisualMismatchPixels` | long | No | Non-negative. |
 | `VisualTotalPixels` | long | No | Positive. |
 | `VisualMismatchRatio` | decimal(12,8) | No | `mismatch / total`. |
@@ -464,7 +498,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | `JobId` | UUID | No | Foreign key. |
 | `PageNumber` | int | Yes | One-based when page-specific. |
 | `ElementId` | string(100) | Yes | IR element reference. |
-| `Type` | enum | No | `LowConfidence`, `ComplexTable`, `ReadingOrder`, `AltText`, `Heading`, `ValidationFailure`, `VisualDifference`, `Other`. |
+| `Type` | enum | No | `LowConfidence`, `ComplexTable`, `ReadingOrder`, `AltText`, `Heading`, `StructuralFallback`, `FormField`, `Other`. Validation failures and visual differences are not Review items. |
 | `Confidence` | decimal(5,4) | Yes | Range `0–1`. |
 | `Code` | string(100) | No | Stable machine-readable reason. |
 | `Message` | string(1000) | No | Customer-safe. |
@@ -497,14 +531,12 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 ```mermaid
 erDiagram
     USER ||--o{ DOCUMENT : owns
-    USER ||--o{ ORDER : places
     DOCUMENT ||--o{ QUOTE : priced_as
-    QUOTE ||--o| PAYMENT : paid_by
-    QUOTE ||--o| ORDER : creates
-    ORDER ||--|| REMEDIATION_JOB : starts
+    QUOTE ||--o| PAYMENT : authorized_by
+    QUOTE ||--o| REMEDIATION_JOB : starts
     REMEDIATION_JOB ||--o{ JOB_STAGE_ATTEMPT : executes
-    DOCUMENT ||--o{ ARTIFACT : has
-    REMEDIATION_JOB ||--o{ ARTIFACT : produces
+    DOCUMENT ||--o{ STORED_FILE : has
+    REMEDIATION_JOB ||--o{ STORED_FILE : produces
     REMEDIATION_JOB ||--o| VALIDATION_RESULT : yields
     REMEDIATION_JOB ||--o{ REVIEW_ITEM : flags
     USER ||--o{ AUDIT_EVENT : acts_in
@@ -517,11 +549,10 @@ erDiagram
 | `User` | Unique normalized email. |
 | `Document` | `(OwnerUserId, CreatedAtUtc DESC)`; `ExpiresAtUtc`. |
 | `Quote` | `(DocumentId, Status)`; `ExpiresAtUtc`. |
-| `Payment` | Unique `QuoteId`; unique provider checkout/payment IDs when non-null. |
-| `Order` | Unique `QuoteId`; unique `PaymentId`; `(OwnerUserId, CreatedAtUtc DESC)`. |
-| `RemediationJob` | Unique `OrderId`; `(Status, QueuedAtUtc)` for worker claims; `CorrelationId`. |
+| `Payment` | Unique `QuoteId`; unique provider checkout/payment IDs when non-null; `(Status, AuthorizationExpiresAtUtc)` for the release deadline. |
+| `RemediationJob` | Unique `QuoteId`; unique `PaymentId`; `(OwnerUserId, QueuedAtUtc DESC)`; `(Status, QueuedAtUtc)` for worker claims; `CorrelationId`. |
 | `JobStageAttempt` | Unique `(JobId, Stage, AttemptNumber)`; filtered unique index allowing at most one `Running` attempt per job. `[ASSUMPTION]` |
-| `Artifact` | Unique `StorageKey`; `(ExpiresAtUtc, DeletedAtUtc)` for cleanup. |
+| `StoredFile` | Unique `StorageKey`; `(ExpiresAtUtc, DeletedAtUtc)` for cleanup. |
 | `ValidationResult` | Unique `JobId`. |
 | `ReviewItem` | `(JobId, PageNumber, Type)`. |
 | `AuditEvent` | `(TargetId, OccurredAtUtc)` and `(CorrelationId, OccurredAtUtc)`. |
@@ -530,7 +561,7 @@ erDiagram
 
 - Roles: `Customer`, `Operator`, `Administrator`.
 - Job and stage enums listed above.
-- Artifact kinds listed above.
+- Stored file kinds listed above.
 - One administrator account created through deployment procedure, not a hard-coded password. `[ASSUMPTION]`
 - No default production price. Ordering remains disabled until an administrator sets price and currency. `[ASSUMPTION]`
 - Initial OCR rate reference: `0.004000` currency units per page, from the source research.
@@ -542,16 +573,16 @@ erDiagram
 | ID | Integration | Required behavior |
 |---|---|---|
 | INT-01 | Mistral OCR 4.1 | Submit rendered/native page inputs, request block output, capture request ID, normalize results, and retry transient failures at most two times with exponential delays of 2 and 8 seconds. `[ASSUMPTION]` |
-| INT-02 | PDFix Enterprise | Run under a commercial SaaS-capable license, consume the IR or an adapter-produced layout template, modify a copy of the original PDF, and retry a process crash once. `[ASSUMPTION]` |
+| INT-02 | PDFix Enterprise | Run under a commercial SaaS-capable license, consume the IR or an adapter-produced layout template, replace the structure tree in a copy of the original PDF, apply Repair-pass fix-ups, and retry a process crash once. `[ASSUMPTION]` |
 | INT-03 | veraPDF | Run locally as a pinned executable/container, use the configured PDF/UA profile, emit machine-readable output, and never retry a deterministic validation failure. `[ASSUMPTION]` |
-| INT-04 | Payment provider | Create hosted checkout, verify signed events, use idempotency keys, and never store card data. Provider is not selected in the source; see OQ-03. `[ASSUMPTION]` |
-| INT-05 | Artifact storage | Store private objects by opaque key, deny public listing, and serve downloads only after application authorization. Storage product is not selected; see OQ-06. `[ASSUMPTION]` |
+| INT-04 | Payment provider | Create hosted checkout with manual capture, verify signed events, Capture or Release each Authorization exactly once, use idempotency keys, and never store card data. Provider is not selected in the source; see OQ-03. `[ASSUMPTION]` |
+| INT-05 | File storage | Store private objects by opaque key, deny public listing, and serve downloads only after application authorization. Storage product is not selected; see OQ-06. `[ASSUMPTION]` |
 
 ### 10.2 Mistral OCR 4.1
 
 | Attribute | Requirement |
 |---|---|
-| Purpose | OCR, layout understanding, block labels, reading order, tables, images, equations, and confidence where available. |
+| Purpose | OCR, layout understanding, block labels, reading order, tables, images, equations, confidence where available, and drafted alt text for Figures (annotation mode). |
 | Authentication | API credential supplied through deployment secret configuration. Exact scheme is not addressed in source material — see OQ-05. |
 | Endpoint | Not addressed in source material — see OQ-05. The endpoint must be configuration, not source code. |
 | Source cost | Approximately `$4/1,000 pages`, equal to `$0.004/page`; annotated processing was described as approximately `$5/1,000 pages`. |
@@ -566,12 +597,12 @@ The adapter shall convert provider output into this internal contract. This is n
 {
   "schemaVersion": "1.0",
   "documentId": "uuid",
+  "classification": "mixed",
   "pages": [
     {
       "pageNumber": 1,
       "width": 612,
       "height": 792,
-      "classification": "born-digital",
       "elements": [
         {
           "id": "e001",
@@ -595,7 +626,7 @@ Allowed initial semantic mappings include `Document`, `Sect`, `H1`–`H6`, `P`, 
 
 | Attribute | Requirement |
 |---|---|
-| Purpose | Apply tag tree, reading order, tables, lists, figures, artifacts, MCIDs, alternative text, language, title, and PDF/UA-related changes to the original PDF copy. |
+| Purpose | Replace any existing tag tree (ADR 0001) and apply reading order, tables, lists, figures, artifacts, MCIDs, alternative text, language, title, and PDF/UA-related changes to the original PDF copy. |
 | Authentication/license | PDFix license material supplied as a deployment secret or licensed runtime file. Exact activation mechanism is not addressed in source material — see OQ-04. |
 | Endpoint | In-process SDK or isolated local worker interface; final deployment model is blocked by licensing terms — see OQ-04. |
 | Rate limit | Determined by licensed instance/worker count. The application must not exceed licensed concurrency. |
@@ -608,9 +639,9 @@ Internal worker request:
 ```json
 {
   "jobId": "uuid",
-  "originalPdfArtifactId": "uuid",
-  "accessibilityIrArtifactId": "uuid",
-  "outputArtifactKind": "RemediatedPdf"
+  "originalPdfFileId": "uuid",
+  "accessibilityIrFileId": "uuid",
+  "outputFileKind": "RemediatedPdf"
 }
 ```
 
@@ -620,7 +651,7 @@ Internal worker response:
 {
   "jobId": "uuid",
   "status": "succeeded",
-  "outputArtifactId": "uuid",
+  "outputFileId": "uuid",
   "elementsApplied": 418,
   "elementsSkipped": 2,
   "warnings": [
@@ -639,7 +670,7 @@ Internal worker response:
 | Profile | PDF/UA-1 for the MVP; keep profile configurable for later PDF/UA-2 support. |
 | Timeout | 5 minutes per document. `[ASSUMPTION]` |
 | Retry | One retry only when the executable fails to start or exits without a parseable report. `[ASSUMPTION]` |
-| Deterministic failure | A valid report with failed rules is a completed validation result, not an integration error. |
+| Deterministic failure | A valid report with failed rules is a completed validation result, not an integration error. It triggers the next Repair pass (FR-39), or fails the job after the last one. |
 
 Normalized validator result:
 
@@ -660,7 +691,7 @@ Normalized validator result:
 
 ### 10.5 Payment provider
 
-The source requires payment before processing but does not select a payment provider. Production checkout is blocked by OQ-03. Development shall use an `IPaymentGateway` abstraction and a non-production fake adapter until a provider is selected. `[ASSUMPTION]`
+The source requires payment before processing but does not select a payment provider. Production checkout is blocked by OQ-03. Development shall use an `IPaymentGateway` abstraction (`Authorize`, `Capture`, `Release`, `Refund`) and a non-production fake adapter until a provider is selected. Payment uses authorize-then-capture (ADR 0002): only payment methods that support holds are offered. `[ASSUMPTION]`
 
 Required application endpoints:
 
@@ -668,7 +699,7 @@ Required application endpoints:
 |---|---|---|
 | `POST /api/quotes/{quoteId}/checkout` | Customer owner | Create or return the active checkout session. `[ASSUMPTION]` |
 | `POST /api/payment-events/{provider}` | Provider signature | Receive provider events; no customer session required. `[ASSUMPTION]` |
-| `GET /orders/{orderId}` | Customer owner | Show payment and processing state. `[ASSUMPTION]` |
+| `POST /api/jobs/{jobId}/cancel` | Customer owner | Cancel a `Queued` job and Release its Authorization. `[ASSUMPTION]` |
 
 Checkout request to the internal adapter:
 
@@ -678,6 +709,7 @@ Checkout request to the internal adapter:
   "amountMinor": 3000,
   "currency": "USD",
   "description": "PDF remediation: 30 pages",
+  "captureMethod": "manual",
   "idempotencyKey": "quote:uuid"
 }
 ```
@@ -692,7 +724,8 @@ Checkout request to the internal adapter:
 | `GET /api/jobs/{id}` | Owner-only status and result summary. `[ASSUMPTION]` |
 | `GET /api/jobs/{id}/report` | Owner-only JSON report. `[ASSUMPTION]` |
 | `GET /api/jobs/{id}/download/pdf` | Owner-only completed PDF stream. `[ASSUMPTION]` |
-| `DELETE /api/documents/{id}` | Owner request to delete artifacts, subject to payment/accounting retention. `[ASSUMPTION]` |
+| `POST /api/jobs/{id}/cancel` | Owner-only; allowed only while `Queued`. `[ASSUMPTION]` |
+| `DELETE /api/documents/{id}` | Owner request to delete all Stored files and the filename; financial and audit records are kept without document content (DR-14). `[ASSUMPTION]` |
 
 Example completed job response:
 
@@ -706,11 +739,12 @@ Example completed job response:
     "failureCount": 0
   },
   "visualDifference": 0.0000,
-  "semanticConfidence": 0.9600,
-  "manualReviewRecommended": true,
+  "repairPassesUsed": 1,
+  "resultVerdict": "manual_review_recommended",
   "reviewItems": [
     {
       "page": 17,
+      "elementId": "e381",
       "type": "complex_table",
       "confidence": 0.7200
     }
@@ -729,12 +763,12 @@ flowchart TD
     B --> C{"Preflight accepted?"}
     C -- No --> D["Show rejection or retry"]
     C -- Yes --> E["Review page-count quote"]
-    E --> F{"Payment confirmed?"}
+    E --> F{"Payment authorized?"}
     F -- No --> G["Cancelled, declined, or pending"]
-    F -- Yes --> H["Process and validate"]
+    F -- Yes --> H["Process, validate, and repair"]
     H --> I{"Completed?"}
-    I -- No --> J["Failure and support status"]
-    I -- Yes --> K["Review report and download"]
+    I -- No --> J["Hold released; failure report"]
+    I -- Yes --> K["Payment captured; review report and download"]
 ```
 
 ### 11.2 Screen inventory
@@ -744,12 +778,12 @@ flowchart TD
 | Sign in / register | Establish customer identity. `[ASSUMPTION]` | Email, password, sign-in action, registration action, error summary | Initial, submitting, invalid credentials, disabled account, success | Success → Dashboard or preserved local return path |
 | Customer dashboard | List owned jobs and start an upload. `[ASSUMPTION]` | `Upload PDF`, job rows with filename/date/status, expiration warning | Loading, empty, error, populated | Upload; job detail; sign out |
 | Upload | Select and submit one PDF | File picker/drop zone, allowed type and configured limits, privacy/retention notice, upload action | Idle, uploading with byte progress, validation error, upload error, success | Success → Preflight/Quote; cancel → Dashboard |
-| Preflight / Quote | Show file facts and price before payment | Filename, page count, price/page, total, currency, expiration, compliance disclaimer, pay action, delete action | Inspecting, accepted/payable, rejected, failed/retryable, expired, ordering unavailable | Pay → provider checkout; delete/dashboard |
-| Payment return | Explain that provider confirmation may be asynchronous | Quote total, `Confirming payment`, declined/cancelled details, retry action | Pending, paid, declined, cancelled, provider error | Paid → Job Status; retry → checkout; cancel → Quote |
-| Job status | Show customer-facing processing stage | Stage indicator, filename/page count, paid amount, support reference, last updated time | Queued, analyzing, remediating, validating, preparing, failed, completed, load error | Completed → Results; failed → support guidance; dashboard |
-| Results | Explain technical and semantic outcome | PDF/UA profile/result, visual-diff result, confidence summary, review-item count/list, explicit non-guarantee, download actions, expiration | Loading, completed with no review items, completed with review items, validation failed, missing artifact, expired | Download PDF/report; dashboard; delete |
+| Preflight / Quote | Show file facts and price before payment | Filename, page count, price/page, total, currency, expiration, compliance disclaimer, statement that the card is charged only if remediation completes, pay action, delete action | Inspecting, accepted/payable, rejected, failed/retryable, expired, ordering unavailable | Pay → provider checkout; delete/dashboard |
+| Payment return | Explain that provider confirmation may be asynchronous | Quote total, `Confirming payment`, declined/cancelled details, retry action | Pending, authorized, declined, cancelled, provider error | Authorized → Job Status; retry → checkout; cancel → Quote |
+| Job status | Show customer-facing processing stage | Stage indicator, filename/page count, held amount, support reference, last updated time, cancel action while queued | Queued, analyzing, remediating, validating, preparing, failed (with Failure report and hold released), cancelled, completed, load error | Completed → Results; failed → support guidance; dashboard |
+| Results | Explain technical and semantic outcome of a Completed job | Result verdict, PDF/UA profile/result, visual-diff result, Repair passes used, review-item list with per-Element confidence, explicit non-guarantee, download actions, expiration | Loading, automated checks passed, manual review recommended, missing file, expired | Download PDF/report; dashboard; delete |
 | Operator job search | Find a job without inspecting document content. `[ASSUMPTION]` | Job/support ID search, state, stage, timestamps, correlation ID | Empty, loading, no result, result, error | Result → Operator Job Detail |
-| Operator job detail | Diagnose and retry eligible failures. `[ASSUMPTION]` | Timeline, stage attempts, sanitized error codes, integration request IDs, retry action, refund-handling flag | Active, completed, retryable failure, non-retryable failure, retry submitting | Back to search; audit timeline |
+| Operator job detail | Diagnose and retry eligible failures. `[ASSUMPTION]` | Timeline, stage attempts and Repair passes, sanitized error codes, integration request IDs, Authorization state and expiry, retry action, post-Capture refund action | Active, completed, retryable failure, non-retryable failure, retry submitting | Back to search; audit timeline |
 | Admin settings | Configure approved commercial and processing values. `[ASSUMPTION]` | Price, currency, limits, retention, confidence threshold, integration enablement/health | Loading, validation error, save error, saved | Operator area; audit event |
 | Access denied / not found | Avoid cross-customer disclosure | Generic message and dashboard link | `403` for role boundary; `404` for customer resource ownership | Dashboard |
 
@@ -776,7 +810,7 @@ Every form shall place an error summary before the form, link each message to it
 | NFR-08 | All browser and integration traffic shall use TLS 1.2 or later. `[ASSUMPTION]` |
 | NFR-09 | The MVP shall use ASP.NET Core Identity with email and password, unique accounts, lockout after 5 failed attempts in 15 minutes, and administrator-created operator/admin roles. `[ASSUMPTION]` |
 | NFR-10 | Password storage shall use the framework's current default password hasher; plaintext or reversible password storage is prohibited. `[ASSUMPTION]` |
-| NFR-11 | Original and derived artifact bytes shall be encrypted at rest by the selected storage platform. `[ASSUMPTION]` |
+| NFR-11 | Original and derived file bytes shall be encrypted at rest by the selected storage platform. `[ASSUMPTION]` |
 | NFR-12 | Application logs, audit metadata, and exception messages shall not contain document text, rendered images, full filenames when avoidable, payment credentials, API keys, license keys, or signed download URLs. `[ASSUMPTION]` |
 | NFR-13 | Uploaded PDFs shall never be executed, and all parsing/remediation shall run in a worker identity without operating-system administrator privileges. `[ASSUMPTION]` |
 | NFR-14 | Secrets shall be supplied from the deployment secret store and shall not appear in source control, database settings, or client responses. `[ASSUMPTION]` |
@@ -798,7 +832,7 @@ Every form shall place an error summary before the form, link each message to it
 | ID | Requirement |
 |---|---|
 | NFR-22 | Payment-event and job-queue handlers shall be idempotent. |
-| NFR-23 | A worker restart shall not cause a paid job to be lost or a completed stage to run concurrently with itself. `[ASSUMPTION]` |
+| NFR-23 | A worker restart shall not cause an authorized job to be lost or a completed stage to run concurrently with itself. `[ASSUMPTION]` |
 | NFR-24 | Structured logs shall include UTC timestamp, level, event ID, correlation ID, job ID where applicable, stage, duration, outcome, and sanitized error code. `[ASSUMPTION]` |
 | NFR-25 | Provider availability, queue age, failure counts by stage, job duration, pages processed, and estimated OCR cost shall be measurable. `[ASSUMPTION]` |
 | NFR-26 | Health endpoints shall distinguish `healthy`, `degraded`, and `unhealthy` dependencies and shall not perform billable OCR or remediation work. `[ASSUMPTION]` |
@@ -816,11 +850,11 @@ Every form shall place an error summary before the form, link each message to it
 
 | ID | Requirement |
 |---|---|
-| NFR-31 | Original and derived customer artifacts shall expire 7 days after job completion or 7 days after an unpaid quote expires, whichever applies. `[ASSUMPTION]` |
+| NFR-31 | Original and derived customer files shall expire 7 days after job completion or 7 days after an unpaid quote expires, whichever applies. `[ASSUMPTION]` |
 | NFR-32 | Relational data shall be backed up daily with 30 days of recoverable backups. `[ASSUMPTION]` |
 | NFR-33 | The documented recovery target shall be an RPO of 24 hours and an RTO of 8 hours for the MVP. `[ASSUMPTION]` |
 | NFR-34 | Backup restore shall be tested once before pilot release and recorded in the rollout checklist. `[ASSUMPTION]` |
-| NFR-35 | Expired artifact deletion shall complete within 24 hours after `ExpiresAtUtc`. `[ASSUMPTION]` |
+| NFR-35 | Expired file deletion shall complete within 24 hours after `ExpiresAtUtc`. `[ASSUMPTION]` |
 
 ## 13. Constraints & Assumptions
 
@@ -836,6 +870,7 @@ Every form shall place an error summary before the form, link each message to it
 - OCR variable cost is modeled from the source value of `$0.004/page`; vendor pricing may change before launch.
 - The service must change accessibility data without intentionally changing rendered pages.
 - Machine validation cannot prove semantic correctness or legal compliance.
+- Checkout can offer only payment methods that support authorize-then-capture, and every job must finish within the provider's authorization window.
 
 ### 13.2 Consolidated assumptions
 
@@ -847,7 +882,7 @@ Every assumption below is a default required to begin implementation and require
 | A-02 | ASP.NET Core Identity email/password authentication is used for MVP. |
 | A-03 | Roles are Customer, Operator, Administrator, plus a non-interactive worker identity. |
 | A-04 | The web application uses ASP.NET Core server-rendered pages and a separate .NET background worker to reduce frontend scope. |
-| A-05 | A relational database supported by the deployment environment stores application data; artifact bytes are stored outside the database. |
+| A-05 | A relational database supported by the deployment environment stores application data; file bytes are stored outside the database. |
 | A-06 | UUIDs, UTC timestamps, integer minor currency units, SHA-256 hashes, and opaque storage keys are used as specified in DR-01 through DR-05. |
 | A-07 | The MVP uses one configured currency and one positive whole-cent price per page. |
 | A-08 | Quotes expire after 24 hours. |
@@ -855,8 +890,8 @@ Every assumption below is a default required to begin implementation and require
 | A-10 | The payment integration uses hosted checkout, signed events, and no application handling of card details. |
 | A-11 | Development begins with a fake payment adapter until a provider is selected. |
 | A-12 | Maximum file size is 100 MB and maximum document length is 200 pages. |
-| A-13 | Artifact retention is 7 days after completion or unpaid quote expiration. |
-| A-14 | Each page is classified as born-digital, scanned, or mixed. |
+| A-13 | Stored file retention is 7 days after completion or unpaid quote expiration. |
+| A-14 | OCR is decided per Source object; each Document gets one descriptive classification (born-digital, scanned, or mixed) during preprocessing. |
 | A-15 | Rendering uses one pinned engine and configured resolution; the exact engine and DPI require OQ-10. |
 | A-16 | Visual preservation requires a mismatch ratio of exactly `0.0000`; otherwise the job fails. |
 | A-17 | Customer status refreshes at most every 15 seconds. |
@@ -866,13 +901,13 @@ Every assumption below is a default required to begin implementation and require
 | A-21 | Worker concurrency defaults to one and is capped by PDFix licensing. |
 | A-22 | A 30-page/25 MB preflight has a 60-second p95 target; a complete job has a 15-minute p95 target under stated exclusions. |
 | A-23 | MVP capacity target is 1,000 orders and 30,000 pages per month. |
-| A-24 | Customer and derived artifacts are privately stored and encrypted at rest. |
+| A-24 | Customer and derived files are privately stored and encrypted at rest. |
 | A-25 | Operator document download is off by default and every support access is audited. |
 | A-26 | Audit retention is 365 days; database backups are daily and retained 30 days, with RPO 24 hours and RTO 8 hours. |
 | A-27 | Supported browsers are the current and previous major versions of Chrome, Edge, Firefox, and Safari. |
 | A-28 | The customer UI supports widths down to 320 CSS pixels and requires JavaScript. |
 | A-29 | CI includes automated tests and accessibility checks; release testing includes keyboard, 200% zoom, and screen-reader smoke tests. |
-| A-30 | Operators flag refund handling, but refunds remain a manual payment-provider action until the selected provider's requirements are known. |
+| A-30 | Failed and cancelled jobs are never charged because their Authorization is Released. Refunds are only a rare manual post-Capture exception handled by an operator. |
 | A-31 | One active attempt is permitted per job stage, and retries never create another charge. |
 | A-32 | Admin setting changes apply only to future quotes/jobs; each quote and job stores a configuration snapshot. |
 | A-33 | The exact role capabilities and boundaries in Section 5 apply: customers manage owned files; operators inspect sanitized job data and retry work; administrators configure the service; workers have only non-interactive processing access. |
@@ -885,12 +920,15 @@ Every assumption below is a default required to begin implementation and require
 | A-40 | TLS 1.2+, framework password hashing, lockout, anti-forgery tokens, signed payment events, least-privilege workers, secret-store configuration, content-free logs, and private no-store downloads are mandatory MVP security controls. |
 | A-41 | Forms use linked error summaries and focus management; live status changes are announced without moving focus; automated and manual accessibility checks follow NFR-17 through NFR-21. |
 | A-42 | Authenticated interactive requests have a 2-second p95 target under 20 concurrent users. |
-| A-43 | Artifact cleanup completes within 24 hours after expiration, and one successful backup-restore rehearsal is required before pilot. |
+| A-43 | Stored file cleanup completes within 24 hours after expiration, and one successful backup-restore rehearsal is required before pilot. |
 | A-44 | New checkout is disabled when a production-critical integration is unhealthy; rollback uses the prior compatible application/worker version, and every database migration has a rollback or documented forward-fix path. |
 | A-45 | Payment, authorization, PDF, IR, storage, and retention changes require senior review; CI permits no new compiler/static-analysis warnings at the configured level. |
-| A-46 | Entity field lengths, nullability, denormalized owner key, unique constraints, indexes, artifact metadata, and configuration seed rules are those specified in Section 9 until an approved schema change replaces them. |
+| A-46 | Entity field lengths, nullability, denormalized owner key, unique constraints, indexes, stored file metadata, and configuration seed rules are those specified in Section 9 until an approved schema change replaces them. |
 | A-47 | An operator can diagnose, retry, or select the manual fallback for a failed job within 15 minutes by following the runbook. |
 | A-48 | MVP uses one deployment and one or more explicitly licensed workers; elastic or multi-region worker creation is deferred. |
+| A-49 | A job may use at most 3 Repair passes; re-analysis OCR cost is absorbed by the service and recorded per job. |
+| A-50 | A job not `Completed` 24 hours before its Authorization expires is Failed and Released. |
+| A-51 | Alt text is drafted using Mistral annotation mode (source estimate about `$5/1,000 pages`). |
 
 ## 14. Risks & Dependencies
 
@@ -898,14 +936,16 @@ Every assumption below is a default required to begin implementation and require
 |---|---|---|---|---|
 | PDFix license does not permit the intended SaaS, container, or worker model, or its price breaks unit economics. | Medium | Critical | Obtain written quote and SaaS/output rights before PDFix-dependent implementation; compare Apryse and Foxit if terms fail. | Product owner, procurement, legal |
 | PDFix cannot consume the normalized IR with enough source-object fidelity. | Medium | Critical | Build a week-one vertical spike using representative born-digital and scanned PDFs; stop and reassess if mapping fails. | Technical lead, PDFix vendor |
-| Mistral output omits or misclassifies structure needed for correct tags. | High | High | Store provider output and normalized IR as separate artifacts; create review items; keep adapter replaceable; benchmark representative corpus. | Product owner, technical lead |
+| Mistral output omits or misclassifies structure needed for correct tags. | High | High | Store provider output and normalized IR as separate files; create review items; keep adapter replaceable; benchmark representative corpus. | Product owner, technical lead |
 | Tables, cross-page content, charts, footnotes, and unusual layouts exceed MVP automation quality. | High | High | Do not promise compliance; flag low-confidence/complex elements; defer verified remediation and alternate parsers. | Product owner, accessibility SME |
 | Exact zero visual-diff fails because the PDF writer changes rendering despite equivalent appearance. | Medium | High | Run an early corpus spike; preserve original streams; make threshold configurable only after accessibility/product approval. | Technical lead, accessibility SME |
 | Payment provider is not selected or contract approval is delayed. | Medium | High | Develop against `IPaymentGateway` fake; keep production launch blocked until signed-event and refund flows pass provider sandbox tests. | Product owner, finance, procurement |
-| Government documents contain confidential or regulated information. | Medium | Critical | Confirm allowed data classes, region, retention, subprocessors, and vendor terms before pilot; keep artifacts private and short-lived. | Security/privacy officer, legal |
+| Government documents contain confidential or regulated information. | Medium | Critical | Confirm allowed data classes, region, retention, subprocessors, and vendor terms before pilot; keep files private and short-lived. | Security/privacy officer, legal |
 | Two junior developers cannot complete vendor integration and accessibility semantics in eight weeks. | High | High | Keep one-parser/one-writer scope; require senior review of architecture and weekly demonstrations; prioritize vertical slice before UI refinement. | Engineering manager |
 | No qualified accessibility SME validates semantic output. | High | High | Identify reviewer before acceptance-corpus sign-off; label results as automated and non-guaranteed. | Product owner |
-| Provider outage or rate limiting delays paid work. | Medium | Medium | Persistent queue, bounded retries, visible status, operator retry, and manual refund path. | Operations |
+| Provider outage or rate limiting delays paid work. | Medium | Medium | Persistent queue, bounded retries, visible status, operator retry, and release of the Authorization when a job cannot finish. | Operations |
+| Many real documents still have Validation failures after Repair passes, so they fail without being charged and revenue falls below cost. | Medium | High | Measure the post-repair failure rate on the representative corpus in the T-005 spike and use it as a pricing input before launch. | Product owner, technical lead |
+| Authorization windows (about 7 days for online cards) are too short for queued, repaired, or operator-retried jobs. | Low | Medium | Release-deadline check (FR-41); keep queue time within licensed capacity; confirm window during OQ-03. | Operations, product owner |
 | OCR price changes from `$0.004/page`. | Medium | Medium | Keep provider cost rate configurable and record estimated cost per job; review margin monthly. | Product owner, finance |
 | Retention or backup assumptions conflict with customer contracts. | Medium | High | Resolve OQ-07 before pilot terms are published. | Legal, security/privacy officer |
 | Insufficient representative documents cause misleading quality claims. | High | High | Assemble and manually annotate a corpus covering born-digital, scanned, mixed, columns, tables, lists, figures, headers/footers, rotated and landscape pages. | Accessibility SME, product owner |
@@ -921,7 +961,7 @@ No existing application or dataset is identified in the source material. No prod
 | Stage | Entry criteria | Activity | Exit criteria |
 |---|---|---|---|
 | Local vertical spike | PDFix evaluation license and Mistral test credentials available | Process at least one born-digital, one scanned, and one mixed PDF through render → Mistral → IR → PDFix → veraPDF → visual diff | Feasibility results documented; no unresolved blocker to IR mapping or license model |
-| Development environment | Database, private artifact storage, fake payment adapter, and worker available | Build complete workflow with test files and non-production integrations | Automated primary and failure-path tests pass |
+| Development environment | Database, private file storage, fake payment adapter, and worker available | Build complete workflow with test files and non-production integrations | Automated primary and failure-path tests pass |
 | Provider sandbox | Payment provider selected; Mistral and PDFix non-production credentials configured | Verify signed events, idempotency, retry, timeout, and failure behavior | No duplicate jobs/charges in replay tests; secrets and logs reviewed |
 | Internal alpha | Representative corpus and operator runbook available | Internal users process test documents; accessibility SME reviews outputs | Blocking defects resolved; known limitations documented |
 | Limited government pilot | Legal, security, pricing, retention, and disclaimer questions closed | Invite a limited named customer group and cap volume at licensed capacity | Pilot metrics and support burden reviewed before broader launch |
@@ -930,10 +970,10 @@ No existing application or dataset is identified in the source material. No prod
 
 - This is a new service; no existing system is replaced.
 - Production ordering remains disabled until price, currency, payment, licenses, storage, privacy terms, and monitoring are configured.
-- If Mistral, PDFix, veraPDF, payment, or storage health is `unhealthy`, new checkout is disabled. Existing paid jobs remain queued or move to a recoverable failed state. `[ASSUMPTION]`
-- If a paid job cannot complete, the operator follows the runbook to retry once where eligible, then flags the order for manual refund handling.
+- If Mistral, PDFix, veraPDF, payment, or storage health is `unhealthy`, new checkout is disabled. Existing authorized jobs remain queued or move to a recoverable failed state. `[ASSUMPTION]`
+- If an Authorized job cannot complete, the operator follows the runbook to retry once where eligible; otherwise the job is Failed and its Authorization is Released.
 - A deployment rollback restores the previous application version and database-compatible worker. Database migrations must support rollback or a documented forward fix. `[ASSUMPTION]`
-- Original documents are never overwritten. Failed derived artifacts are not offered to customers and expire under the same retention policy.
+- Original documents are never overwritten. Derived files from failed jobs are not offered to customers and expire under the same retention policy.
 
 ## 16. Definition of Done
 
@@ -959,8 +999,8 @@ A story is done only when every applicable item below is complete.
 - [ ] Unit tests cover calculation, validation, state transitions, mapping, and error classification.
 - [ ] Integration tests cover database constraints, storage authorization, queue idempotency, and adapter contracts.
 - [ ] End-to-end tests cover upload → quote → fake/sandbox payment → processing → report → download.
-- [ ] Negative tests cover invalid PDF, oversize PDF, unauthorized ID, expired quote, duplicate payment event, Mistral timeout, PDFix failure, veraPDF failure, visual difference, expired artifact, and missing artifact.
-- [ ] Tests prove no Mistral/PDFix execution occurs before verified payment.
+- [ ] Negative tests cover invalid, encrypted, and signed PDFs, oversize PDF, unauthorized ID, expired quote, duplicate payment event, Mistral timeout, PDFix failure, veraPDF failure after Repair passes, visual difference, authorization-expiry release, cancellation race, expired file, and missing file.
+- [ ] Tests prove no Mistral/PDFix execution occurs before a verified Authorization, and that no failed or cancelled job is ever Captured.
 
 ### Accessibility
 
@@ -976,7 +1016,7 @@ A story is done only when every applicable item below is complete.
 - [ ] Logs and audit events were inspected to confirm no document content or secret is present.
 - [ ] New secrets are deployment-managed and absent from source and test fixtures.
 - [ ] Metrics, structured logs, correlation IDs, and health behavior are implemented.
-- [ ] Database and artifact cleanup effects are documented.
+- [ ] Database and file cleanup effects are documented.
 
 ### Documentation and deployment
 
@@ -993,17 +1033,17 @@ The order below keeps one runnable path at every stage and puts the highest tech
 
 | Sequence | Target | Work | Runnable outcome |
 |---:|---|---|---|
-| 1 | Week 1 | Create solution skeleton, domain project, web project, worker project, test projects, configuration validation, health endpoint, database, and private artifact-store abstraction. | App starts locally, reports health, writes one record, and stores/reads a test artifact. |
-| 2 | Week 1 | Build PDF preflight spike: upload, signature/parser validation, page count, SHA-256, page rendering, page classification, and original artifact preservation. | One test PDF produces metadata and page images; invalid input is rejected. |
+| 1 | Week 1 | Create solution skeleton, domain project, web project, worker project, test projects, configuration validation, health endpoint, database, and private file-store abstraction. | App starts locally, reports health, writes one record, and stores/reads a test file. |
+| 2 | Week 1 | Build PDF preflight spike: upload, signature/parser validation, encryption/signature detection, page count, SHA-256, and original file preservation; separately prototype preprocessing (page rendering and Source object analysis). | One test PDF produces preflight metadata without rendering; preprocessing produces page images; invalid, encrypted, and signed input is rejected. |
 | 3 | Week 1–2 | Build Mistral adapter and Accessibility IR schema/validator using recorded test responses. | One page becomes schema-valid IR; timeout and malformed response tests pass. |
 | 4 | Week 2 | Build PDFix adapter spike and veraPDF adapter; run a representative vertical slice. | One born-digital and one scanned sample reach a remediated PDF and parsed validation report. |
-| 5 | Week 2 | Build deterministic page render comparison. | Unchanged/tag-only sample reports `0.0000`; intentionally changed sample fails. |
-| 6 | Week 3 | Implement customer identity/authorization and document ownership. | Customer A cannot access Customer B's IDs or artifacts. |
+| 5 | Week 2 | Build deterministic page render comparison and measure the post-repair Validation failure rate on the corpus. | Unchanged/tag-only sample reports `0.0000`; intentionally changed sample fails; failure rate documented as a pricing input. |
+| 6 | Week 3 | Implement customer identity/authorization and document ownership. | Customer A cannot access Customer B's IDs or files. |
 | 7 | Week 3 | Implement upload, preflight status, quote calculation, price snapshot, quote screen, and expiration. | A signed-in customer receives an immutable quote for a valid PDF. |
-| 8 | Week 4 | Implement `IPaymentGateway`, fake adapter, provider adapter shell, signed-event handler, and idempotent order/job creation. | A fake/sandbox paid event queues exactly one job; duplicates have no effect. |
-| 9 | Week 4–5 | Implement persistent job state machine, worker claims, stage attempts, retries, and customer-facing status mapping. | Paid job resumes after worker restart and exposes safe status. |
-| 10 | Week 5 | Connect full Mistral → IR → PDFix → veraPDF → visual diff pipeline. | End-to-end paid test job reaches a deterministic terminal result. |
-| 11 | Week 6 | Implement customer report, review items, PDF/report download authorization, expiration, and cleanup. | Customer downloads completed artifacts and receives `410` after simulated expiration. |
+| 8 | Week 4 | Implement `IPaymentGateway` (authorize/capture/release), fake adapter, provider adapter shell, signed-event handler, idempotent job creation, and the release deadline. | A fake/sandbox authorization event queues exactly one job; duplicates have no effect; completion captures and failure releases exactly once. |
+| 9 | Week 4–5 | Implement persistent job state machine, worker claims, stage attempts, retries, and customer-facing status mapping. | Authorized job resumes after worker restart and exposes safe status. |
+| 10 | Week 5 | Connect full Mistral → IR → PDFix → veraPDF → Repair passes → visual diff pipeline. | End-to-end authorized test job reaches a deterministic terminal result. |
+| 11 | Week 6 | Implement customer report, review items, PDF/report download authorization, expiration, and cleanup. | Customer downloads completed files and receives `410` after simulated expiration. |
 | 12 | Week 6 | Implement operator search/detail/retry and admin settings/health. | Operator diagnoses a seeded failure; administrator changes future-job settings. |
 | 13 | Week 7 | Accessibility testing, security tests, logging/audit review, rate/timeout tests, backup/restore rehearsal, and representative corpus evaluation. | All Definition of Done gates pass in production-equivalent environment. |
 | 14 | Week 8 | Fix pilot blockers, finish runbooks and disclaimers, configure production vendors, deploy limited pilot, and monitor. | Named pilot users can place capped real orders with an operator on call. |
@@ -1013,10 +1053,10 @@ The order below keeps one runnable path at every stage and puts the highest tech
 | Ticket | Owner suggestion | Work | Done means |
 |---|---|---|---|
 | T-001 — Solution and health skeleton | Developer 1 | Create web, domain/application, infrastructure, worker, unit-test, integration-test projects; add configuration validation and `/health`. | Clean checkout builds and tests; web and worker start; health reports database/storage fakes. |
-| T-002 — Artifact storage contract | Developer 2 | Define `IArtifactStore`, metadata model, local-development implementation, SHA-256 calculation, and owner-independent opaque keys. | Round-trip and deletion tests pass; path traversal tests fail safely; no public path is returned. |
+| T-002 — File storage contract | Developer 2 | Define `IFileStore`, metadata model, local-development implementation, SHA-256 calculation, and owner-independent opaque keys. | Round-trip and deletion tests pass; path traversal tests fail safely; no public path is returned. |
 | T-003 — PDF preflight contract | Developer 1 | Define accepted/rejected results, parser abstraction, page count, size/signature checks, and stable error codes. | Fixtures for valid, non-PDF, corrupted, oversize, and over-page-limit inputs produce expected results. |
 | T-004 — Accessibility IR v1 schema | Developer 2 | Define document/page/element/table/list/figure structures and JSON schema; create validator and examples. | Valid examples pass; missing IDs, invalid bounding boxes, duplicate reading order, and invalid table spans fail with stable errors. |
-| T-005 — Vendor feasibility harness | Developers 1 and 2 pairing | Wire one hard-coded test PDF through render, Mistral adapter, IR, PDFix adapter, veraPDF, and visual diff outside the customer UI. | Results and blockers are documented for born-digital and scanned samples; output and reports are saved as test artifacts. |
+| T-005 — Vendor feasibility harness | Developers 1 and 2 pairing | Wire one hard-coded test PDF through render, Mistral adapter, IR, PDFix adapter, veraPDF, and visual diff outside the customer UI. | Results and blockers are documented for born-digital and scanned samples; output and reports are saved as test files. |
 
 T-005 is the release gate. If the team cannot map IR elements back to source PDF objects, preserve page rendering, or secure acceptable PDFix SaaS rights, product leadership must resolve OQ-04 before the team builds checkout UI.
 
@@ -1026,35 +1066,36 @@ T-005 is the release gate. If the team cannot map IR elements back to source PDF
 |---|---|---|---|---|
 | OQ-01 | Does “Govern” mean only U.S. state/local-government staff, or any government/public-sector customer? | Determines eligibility, language, procurement, support, and data policy. | Final personas, terms, pilot recruitment | Product owner |
 | OQ-02 | What customer price per page, currency, minimum charge, quote lifetime, tax treatment, and refund policy are approved? | Defines checkout amount and commercial viability. | Production pricing and customer terms | Product owner, finance, legal |
-| OQ-03 | Which payment provider will be used, and does it support the target customers, signed events, refunds, taxes, and required regions? | The source requires payment but names no provider. | Production checkout, refund runbook, provider endpoint details | Product owner, finance, procurement, security |
+| OQ-03 | Which payment provider will be used, and does it support the target customers, manual capture and its authorization window, signed events, refunds, taxes, and required regions? | The source requires payment but names no provider. | Production checkout, refund runbook, provider endpoint details | Product owner, finance, procurement, security |
 | OQ-04 | What are PDFix Enterprise's written SaaS rights, annual/perpetual price, worker/instance definition, container rules, autoscaling rules, output redistribution rights, and activation method? | License terms may determine architecture and margin. | Production remediation and deployment topology | Procurement, legal, product owner, PDFix |
 | OQ-05 | What Mistral contract, region, retention/training terms, authentication, endpoint, rate limit, batch option, and final OCR 4.1 price apply? | Government documents may not be allowed in an unapproved cloud service. | Production OCR, concurrency, privacy notice, cost model | Security/privacy, legal, procurement, Mistral |
-| OQ-06 | Which database, private artifact storage, queue, secret store, and hosting environment are approved? | Required for deployable infrastructure and cost estimates. | Infrastructure implementation and deployment | Engineering manager, operations, security |
-| OQ-07 | What document classifications are permitted, and what are the approved artifact, audit, payment, and backup retention periods? | Government content may include confidential or regulated data. | Privacy notice, cleanup, backups, customer eligibility | Security/privacy officer, records manager, legal |
+| OQ-06 | Which database, private file storage, queue, secret store, and hosting environment are approved? | Required for deployable infrastructure and cost estimates. | Infrastructure implementation and deployment | Engineering manager, operations, security |
+| OQ-07 | What data classifications (sensitivity levels) are permitted, and what are the approved file, audit, payment, and backup retention periods? | Government content may include confidential or regulated data. | Privacy notice, cleanup, backups, customer eligibility | Security/privacy officer, records manager, legal |
 | OQ-08 | Is ASP.NET Core Identity acceptable, or is government/enterprise federation such as Entra ID required for MVP? | Changes registration, support, account ownership, and organization model. | Production authentication and onboarding | Product owner, security |
 | OQ-09 | What exact compliance language and disclaimer has legal approved for quote, payment, result, and marketing screens? | Incorrect claims create material legal risk. | Production UI and terms | Legal, accessibility SME, product owner |
 | OQ-10 | Which PDF renderer and DPI are approved, and is exact zero pixel difference required for every PDF or may a measured tolerance be used? | Determines preprocessing cost and whether valid tag-only outputs can complete. | Visual-diff implementation and success threshold | Technical lead, accessibility SME |
 | OQ-11 | Which veraPDF version and exact PDF/UA-1 profile will be pinned, and when should PDF/UA-2 be supported? | Validation results vary by version/profile. | Reproducible validation and acceptance corpus | Accessibility SME, technical lead |
-| OQ-12 | What confidence threshold creates a review item, and how is document-level semantic confidence calculated? | Source examples show confidence routing but no approved threshold/formula. | Final report logic | Accessibility SME, product owner |
-| OQ-13 | Which semantic structures are mandatory for MVP acceptance, especially alternative text, charts, formulas, forms, links, and cross-page tables? | Not every document type can be remediated equally in eight weeks. | Acceptance corpus and launch claims | Accessibility SME, product owner |
+| OQ-12 | What confidence threshold creates a review item? (Resolved in part: there is no document-level confidence score.) | Source examples show confidence routing but no approved threshold. | Final report logic | Accessibility SME, product owner |
+| OQ-13 | Which semantic structures are mandatory for MVP acceptance, especially charts, formulas, links, and cross-page tables? (Resolved in part: alt text is model-drafted and always reviewed; form fields are accepted but not remediated.) | Not every document type can be remediated equally in eight weeks. | Acceptance corpus and launch claims | Accessibility SME, product owner |
 | OQ-14 | Who performs accessibility review of the representative corpus, and what score or maximum corrections per page permits pilot release? | Machine validation does not prove semantic quality. | Pilot go/no-go | Accessibility program owner |
-| OQ-15 | What happens commercially after a paid job fails or returns validation failures: automatic refund, retry, service credit, or deliver-with-warning? | Determines customer experience and accounting behavior. | Failure UI, operator runbook, payment actions | Product owner, finance, legal |
-| OQ-16 | Are customers allowed to delete order metadata as well as artifact bytes, or must financial records be retained? | Privacy deletion and accounting retention may conflict. | Delete behavior and retention schema | Legal, finance, records manager |
+| OQ-15 | **Resolved.** Validation failures trigger up to 3 Repair passes; a job that still fails is not delivered and its Authorization is Released (ADR 0002). | — | — | — |
+| OQ-16 | **Resolved.** Deletion removes all Stored files and the filename; financial and audit records are retained without document content (DR-14). Legal should still confirm retention periods under OQ-07. | — | — | — |
 | OQ-17 | What support channel and response target should failed orders display? | The MVP currently has only a support reference ID. | Failure screen and runbook | Product owner, operations |
 | OQ-18 | Is a senior engineer available for architecture, security, payment, and PDF semantics review during the eight-week schedule? | Two junior developers need decisions and review in high-risk areas. | Delivery confidence and Definition of Done staffing | Engineering manager |
 
 ## 19. Glossary
+
+Domain terms (Document, Quote, Authorization, Capture, Release, Job, Attempt, Repair pass, Result verdict, Review item, Stored file, and others) are defined canonically in `GLOSSARY.md`; where this table and that file differ, `GLOSSARY.md` wins. Decisions are recorded in `docs/adr/`.
 
 | Term | Definition |
 |---|---|
 | Accessibility IR | The service-owned, vendor-neutral JSON representation of document structure, reading order, geometry, confidence, and source-object mappings. |
 | ADA | Americans with Disabilities Act. In this PRD, it describes the legal accessibility context; the automated service does not make a legal compliance determination. |
 | Alternative text / alt text | Text that communicates the purpose or content of an informative image to a person who cannot see it. |
-| Artifact (service) | A stored file produced or consumed by a job, such as the original PDF, page render, IR, remediated PDF, or validation report. |
-| Artifact (PDF) | A PDF structure role for repeated or decorative page content that assistive technology should generally ignore. |
+| Artifact | A PDF structure role for repeated or decorative page content that assistive technology should generally ignore. Not used for stored files. |
 | Born-digital PDF | A PDF created from software with extractable text or graphic objects, rather than only page images. |
 | Bounding box | Four coordinates defining an element's position on a page. |
-| Confidence | A value from 0 to 1 representing a model's certainty about an element or decision. It is not a compliance score. |
+| Confidence | A value from 0 to 1 representing a model's certainty about a single Element. There is no document-level confidence, and it is not a compliance score. |
 | Correlation ID | An identifier carried through logs and stages so one request or job can be traced. |
 | Customer-safe error | An error category that explains next steps without revealing secrets, stack traces, storage paths, or another customer's data. |
 | Decorative image | An image that adds no information and should be ignored by assistive technology. |
@@ -1065,20 +1106,20 @@ T-005 is the release gate. If the team cannot map IR elements back to source PDF
 | MCID | Marked Content Identifier. A PDF identifier that connects page content to an element in the structure tree. |
 | Minor currency unit | The smallest whole unit used for payment calculation, such as a cent for USD. |
 | Mistral OCR 4.1 | The cloud document-processing model selected for MVP OCR, layout blocks, labels, reading order, and confidence data. |
-| Mixed PDF | A PDF containing both native digital content and scanned/image-only content, either on different pages or within the same page. |
+| Mixed PDF | A Document containing both native digital content and scanned/image-only content. Classification applies to the Document, not to pages. |
 | OCR | Optical Character Recognition. It converts text visible in an image into machine-readable text. |
 | PAC 2026 | PDF Accessibility Checker. It is used as a development or human QA tool, not embedded in the MVP service. |
 | ParentTree | A PDF data structure used to map marked page content and annotations to structure elements. |
 | PDF/UA | ISO standard for accessible PDF. PDF/UA-1 is the MVP machine-validation target; a pass does not by itself prove WCAG or legal compliance. |
 | PDFBox | Apache-licensed PDF library discussed as a possible future custom tagging engine; not part of MVP. |
 | PDFix Enterprise | Commercial SDK selected to write and repair accessibility structures in the original PDF. |
-| Preflight | Validation performed before payment: file type, readability, size, page count, and configured limits. |
+| Preflight | The minimal checks performed before payment: file type, readability, encryption/restrictions, digital signature, size, page count, and configured limits. No rendering or OCR. |
 | Quote | An immutable page count, price per page, currency, total, and expiration shown before payment. |
 | Reading order | The semantic sequence in which assistive technology presents document content. |
 | Remediation | Adding or correcting PDF accessibility information such as tags, reading order, table structure, text alternatives, language, and metadata. |
 | Review item | A page/element issue that automation could not verify confidently and that may need human attention. |
 | SaaS | Software as a Service. Customers access the hosted service and pay for processing rather than installing the SDKs. |
-| Scanned PDF | A PDF page whose visible content is primarily an image and requires OCR for machine-readable text. |
+| Scanned PDF | A Document whose visible content is image-only Source objects that require OCR for machine-readable text. |
 | Semantic validation | Evaluation of whether tags and descriptions are meaningful and correct, not merely syntactically valid. |
 | Source object | Native text, image, or graphic object in the original PDF to which an IR element may map. |
 | Structure tree / tag tree | The hierarchy in a tagged PDF that identifies headings, paragraphs, lists, tables, figures, and their reading order. |
