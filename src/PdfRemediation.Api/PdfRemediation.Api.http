@@ -1,0 +1,6 @@
+@PdfRemediation.Api_HostAddress = http://localhost:5253
+
+GET {{PdfRemediation.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

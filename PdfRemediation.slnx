@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PdfRemediation.Api/PdfRemediation.Api.csproj" />
+    <Project Path="src/PdfRemediation.Domain/PdfRemediation.Domain.csproj" />
+    <Project Path="src/PdfRemediation.Infrastructure/PdfRemediation.Infrastructure.csproj" />
+  </Folder>
+</Solution>

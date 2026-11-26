@@ -1,0 +1,11 @@
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\bin\Debug\net10.0\PdfRemediation.Domain.deps.json
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\bin\Debug\net10.0\PdfRemediation.Domain.dll
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\bin\Debug\net10.0\PdfRemediation.Domain.pdb
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.GeneratedMSBuildEditorConfig.editorconfig
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.AssemblyInfoInputs.cache
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.AssemblyInfo.cs
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.csproj.CoreCompileInputs.cache
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.dll
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\refint\PdfRemediation.Domain.dll
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\PdfRemediation.Domain.pdb
+C:\workspace\pdf-remediation-v2\src\PdfRemediation.Domain\obj\Debug\net10.0\ref\PdfRemediation.Domain.dll
