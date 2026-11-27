@@ -1,0 +1,57 @@
+{
+  "pages": [
+    {
+      "index": 0,
+      "markdown": "# Harbour Library Annual Report\n\nThe library served more readers this year than in any year before. Opening hours were extended on weekday evenings.\n\n# Opening hours\n\nThe library is open from nine until eight, Monday to Saturday.",
+      "images": [],
+      "tables": [],
+      "hyperlinks": [],
+      "header": null,
+      "footer": null,
+      "dimensions": { "dpi": 150, "height": 1650, "width": 1275 },
+      "blocks": [
+        {
+          "type": "title",
+          "content": "Harbour Library Annual Report",
+          "top_left_x": 146, "top_left_y": 148, "bottom_right_x": 712, "bottom_right_y": 208,
+          "confidence_scores": { "average_content_confidence_score": 0.99, "minimum_content_confidence_score": 0.97, "block_type_confidence_score": 0.93 }
+        },
+        {
+          "type": "text",
+          "content": "The library served more readers this year than in any year before. Opening hours were extended on weekday evenings.",
+          "top_left_x": 146, "top_left_y": 250, "bottom_right_x": 766, "bottom_right_y": 320,
+          "confidence_scores": { "average_content_confidence_score": 0.98, "minimum_content_confidence_score": 0.9, "block_type_confidence_score": 0.97 }
+        },
+        {
+          "type": "image",
+          "image_id": "img-0.jpeg",
+          "content": "",
+          "top_left_x": 900, "top_left_y": 150, "bottom_right_x": 1200, "bottom_right_y": 400,
+          "confidence_scores": { "average_content_confidence_score": null, "minimum_content_confidence_score": null, "block_type_confidence_score": 0.61 }
+        },
+        {
+          "type": "title",
+          "content": "Opening hours",
+          "top_left_x": 146, "top_left_y": 366, "bottom_right_x": 358, "bottom_right_y": 414,
+          "confidence_scores": { "average_content_confidence_score": 0.99, "minimum_content_confidence_score": 0.99, "block_type_confidence_score": 0.88 }
+        },
+        {
+          "type": "text",
+          "content": "The library is open from nine until eight, Monday to Saturday.",
+          "top_left_x": 146, "top_left_y": 438, "bottom_right_x": 726, "bottom_right_y": 474,
+          "confidence_scores": { "average_content_confidence_score": 0.99, "minimum_content_confidence_score": 0.95, "block_type_confidence_score": 0.96 }
+        },
+        {
+          "type": "footer",
+          "content": "Page 1",
+          "top_left_x": 146, "top_left_y": 1540, "bottom_right_x": 204, "bottom_right_y": 1566,
+          "confidence_scores": { "average_content_confidence_score": 0.97, "minimum_content_confidence_score": 0.96, "block_type_confidence_score": 0.79 }
+        }
+      ],
+      "confidence_scores": { "average_page_confidence_score": 0.98, "minimum_page_confidence_score": 0.9 }
+    }
+  ],
+  "model": "mistral-ocr-4-1",
+  "usage_info": { "pages_processed": 1, "doc_size_bytes": 184321 },
+  "document_annotation": null
+}
