@@ -1,0 +1,6 @@
+# Pinned external tools for the T-005 benchmark and its tests.
+# The .NET code runs on the host and calls these with `docker compose run`.
+services:
+  verapdf:
+    # veraPDF 1.30.4. PDFs arrive on stdin; the JSON report goes to stdout.
+    image: verapdf/cli:v1.30.4@sha256:2e7596438a275a6a0a97c741b101e688c109e622aace72e55e58b429aade3ee2

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Harbour Library Annual Report",
+  "language": "en-GB",
+  "pages": [
+    {
+      "pageNumber": 1,
+      "width": 612,
+      "height": 792,
+      "elements": [
+        {
+          "id": "e1",
+          "type": "H1",
+          "bbox": [72, 74, 340, 98],
+          "readingOrder": 1,
+          "text": "Harbour Library Annual Report",
+          "sourceObjects": ["p1:s0:23-42", "p1:s0:43-64", "p1:s0:65-84", "p1:s0:85-104"]
+        },
+        {
+          "id": "e2",
+          "type": "P",
+          "bbox": [72, 122, 366, 152],
+          "readingOrder": 2,
+          "text": "The library served more readers this year than in any year before. Opening hours were extended on weekday evenings.",
+          "sourceObjects": [
+            "p1:s0:131-142", "p1:s0:143-164", "p1:s0:165-184", "p1:s0:185-200", "p1:s0:201-222", "p1:s0:223-238",
+            "p1:s0:239-254", "p1:s0:255-270", "p1:s0:271-282", "p1:s0:283-296", "p1:s0:297-312", "p1:s0:313-334",
+            "p1:s0:361-380", "p1:s0:381-398", "p1:s0:399-414", "p1:s0:415-438", "p1:s0:439-450", "p1:s0:451-472",
+            "p1:s0:473-498"
+          ]
+        },
+        {
+          "id": "e3",
+          "type": "H2",
+          "bbox": [72, 178, 170, 197],
+          "readingOrder": 3,
+          "text": "Opening hours",
+          "sourceObjects": ["p1:s0:525-544", "p1:s0:545-562"]
+        },
+        {
+          "id": "e4",
+          "type": "P",
+          "bbox": [72, 212, 347, 226],
+          "readingOrder": 4,
+          "text": "The library is open from nine until eight, Monday to Saturday.",
+          "sourceObjects": [
+            "p1:s0:589-600", "p1:s0:601-622", "p1:s0:623-634", "p1:s0:635-650", "p1:s0:651-666", "p1:s0:667-682",
+            "p1:s0:683-700", "p1:s0:701-720", "p1:s0:721-740", "p1:s0:741-752", "p1:s0:753-778"
+          ]
+        },
+        {
+          "id": "e5",
+          "type": "Artifact",
+          "bbox": [72, 741, 96, 750],
+          "readingOrder": 5,
+          "text": "Page 1",
+          "sourceObjects": ["p1:s0:832-845", "p1:s0:846-855"]
+        }
+      ]
+    }
+  ]
+}
