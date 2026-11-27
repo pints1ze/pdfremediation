@@ -98,6 +98,7 @@ public class BenchmarkCommandTests
         var runs = Directory.GetDirectories(corpus.Out).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(2, runs.Length);
         var liveFile = Path.Combine(runs[0], "files", "headings-and-paragraphs");
+        Assert.True(File.Exists(Path.Combine(liveFile, "ir.json")), $"The live run made no IR; reader.json: {File.ReadAllText(Path.Combine(liveFile, "reader.json"))}");
         var liveIr = File.ReadAllText(Path.Combine(liveFile, "ir.json"));
         Assert.NotNull(IrParser.Parse(liveIr).Ir);
         Assert.True(File.Exists(Path.Combine(liveFile, "tagged.pdf")));

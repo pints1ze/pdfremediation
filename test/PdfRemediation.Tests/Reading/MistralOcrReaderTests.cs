@@ -29,6 +29,41 @@ public class MistralOcrReaderTests
     }
 
     [Fact]
+    public async Task A_real_recording_replays_to_the_hand_written_IR_with_heading_levels_from_its_markdown()
+    {
+        // Recorded live from mistral-ocr-4-1 (request 01a21ea0-69af-7f28-aa40-2b345aad8629). Block content is Markdown,
+        // so "## Opening hours" is an H2 whose text is "Opening hours".
+        var reader = new MistralOcrReader(new MistralReplayTransport(Fixtures.Path(Path.Combine("recordings", "mistral", "headings-and-paragraphs"))), costPerPageUsd: 0.004);
+
+        var result = await reader.ReadAsync(Input(), CancellationToken.None);
+
+        Assert.Empty(result.Errors);
+        Assert.Empty(result.Warnings);
+        var expected = IrParser.Parse(Fixtures.Text("headings-and-paragraphs.ir.json")).Ir!.Pages[0].Elements;
+        var actual = result.Ir!.Pages[0].Elements;
+        Assert.Equal(expected.Select(e => (e.Type, e.ReadingOrder, e.Text)), actual.Select(e => (e.Type, e.ReadingOrder, e.Text)));
+        Assert.Equal(expected.Select(e => e.SourceObjects), actual.Select(e => e.SourceObjects));
+        Assert.Equal("01a21ea0-69af-7f28-aa40-2b345aad8629", Assert.Single(result.Calls).RequestId);
+    }
+
+    [Theory]
+    [InlineData("Opening hours", ElementType.H1, "Opening hours")]
+    [InlineData("### Opening hours", ElementType.H3, "Opening hours")]
+    [InlineData("######## Opening hours", ElementType.H6, "Opening hours")]
+    [InlineData("#Opening hours", ElementType.H1, "#Opening hours")]
+    [InlineData("## Opening\nhours", ElementType.H2, "Opening hours")]
+    public async Task A_title_takes_its_heading_level_and_text_from_its_Markdown(string content, ElementType type, string text)
+    {
+        var response = JsonNode.Parse(Recording)!;
+        response["pages"]![0]!["blocks"]![3]!["content"] = content;
+
+        var result = await Read(response.ToJsonString());
+
+        var heading = result.Ir!.Pages[0].Elements[2];
+        Assert.Equal((type, text), (heading.Type, heading.Text));
+    }
+
+    [Fact]
     public async Task Each_Element_links_to_the_Source_objects_its_block_overlaps()
     {
         var result = await Read(Recording);

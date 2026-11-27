@@ -21,7 +21,7 @@ internal static class MistralNormalizer
 
     private static readonly Dictionary<string, ElementType> Mapped = new(StringComparer.Ordinal)
     {
-        ["title"] = ElementType.H1, // Mistral gives no heading levels; enrichment sets them later.
+        ["title"] = ElementType.H1, // The level comes from the Markdown heading marker in the content; see Heading.
         ["text"] = ElementType.P,
         ["list"] = ElementType.P, // IR v1 has no list Elements yet.
         ["caption"] = ElementType.P,
@@ -127,11 +127,34 @@ internal static class MistralNormalizer
                 Clamp(top * scaleY, page.Height),
                 Clamp(right * scaleX, page.Width),
                 Clamp(bottom * scaleY, page.Height));
-            var text = block.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString()! : "";
+            // Content is Markdown, where a single line break is a soft wrap, so line breaks become spaces.
+            var text = block.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
+                ? string.Join(' ', c.GetString()!.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                : "";
+            if (elementType == ElementType.H1)
+            {
+                (elementType, text) = Heading(text);
+            }
+
             elements.Add(new NormalizedElement($"p{page.PageNumber}e{index}", elementType, bbox, 0, confidence, text, []));
         }
 
         return elements;
+    }
+
+    /// <summary>
+    /// Block content is Markdown, so a title reads "## Opening hours": the number of leading '#' is the heading level
+    /// (capped at H6) and the text is what follows. A title with no marker is an H1.
+    /// </summary>
+    private static (ElementType Type, string Text) Heading(string content)
+    {
+        var level = content.TakeWhile(ch => ch == '#').Count();
+        if (level == 0 || level == content.Length || content[level] != ' ')
+        {
+            return (ElementType.H1, content);
+        }
+
+        return (ElementType.H1 + Math.Min(level, 6) - 1, content[(level + 1)..]);
     }
 
     private static List<NormalizedElement> Link(List<NormalizedElement> elements, ReaderPage page, IEnumerable<SourceObject> sourceObjects, List<ReaderDiagnostic> warnings)

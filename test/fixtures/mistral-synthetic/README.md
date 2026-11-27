@@ -4,4 +4,4 @@ These are not recordings. They follow the response shape documented for `POST /v
 
 The image block deliberately covers an empty area, to exercise a block type that IR v1 has no Element type for.
 
-Real recordings from live runs go in `../recordings/`.
+Real recordings from live runs are in `../recordings/`. The live response showed one thing these got wrong: block content is Markdown, so a real title reads `## Opening hours`.
