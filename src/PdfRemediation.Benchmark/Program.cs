@@ -1,3 +1,3 @@
 using PdfRemediation.Benchmark;
 
-return BenchmarkCommand.Run(args, Console.Out);
+return await BenchmarkCommand.RunAsync(args, Console.Out);

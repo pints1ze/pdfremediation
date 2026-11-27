@@ -1,5 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <ProjectReference Include="..\PdfRemediation.Infrastructure\PdfRemediation.Infrastructure.csproj" />
+    <ProjectReference Include="..\PdfRemediation.Domain\PdfRemediation.Domain.csproj" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
