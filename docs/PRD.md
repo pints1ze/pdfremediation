@@ -2,13 +2,13 @@
 
 **Document status:** Draft for stakeholder review, revised 2026-11-26 to match `GLOSSARY.md` and `docs/adr/`  
 **Target platform:** .NET  
-**Delivery team:** Two junior developers  
-**Target schedule:** Eight weeks  
+**Delivery team:** One developer  
+**Target schedule:** A fixed two-week writer spike (T-005), then a schedule re-estimated from its results  
 **Primary audience:** Government staff who publish or maintain PDF documents
 
 ## 1. Summary
 
-PDF Remediation Service is a paid web application for government staff who need to improve the accessibility of PDF documents without changing their visible appearance. A customer uploads one PDF, sees a price calculated from its page count, and authorizes payment. The customer is charged only if remediation completes, and then receives a remediated PDF plus a machine-readable and human-readable processing report. If remediation fails, the hold is released and the customer receives a failure report instead. The MVP uses Mistral OCR 4.1 for page and document understanding, a vendor-neutral accessibility intermediate representation (IR), PDFix Enterprise to modify the original PDF, and veraPDF to validate machine-verifiable PDF/UA requirements. The service reports validation and confidence results but does not promise that automated output is fully ADA, WCAG, or PDF/UA conformant without human review.
+PDF Remediation Service is a paid web application for government staff who need to improve the accessibility of PDF documents without changing their visible appearance. A customer uploads one PDF, sees a price calculated from its page count, and authorizes payment. The customer is charged only if remediation completes, and then receives a remediated PDF plus a machine-readable and human-readable processing report. If remediation fails, the hold is released and the customer receives a failure report instead. The MVP uses one document-understanding reader (Mistral OCR 4.1 or a self-hosted PaddleOCR-VL-1.6, chosen by benchmark) plus Claude Haiku 5.5 for heading levels, list structure and alt-text drafts; a vendor-neutral accessibility intermediate representation (IR); the service's own tag writer, which adds a new tag tree to a copy of the original PDF without changing its page content (ADR 0003); and veraPDF to validate machine-verifiable PDF/UA requirements. Documents are processed by third-party services, so the MVP accepts only Documents the customer attests are intended for public release (ADR 0004). The service reports validation and confidence results but does not promise that automated output is fully ADA, WCAG, or PDF/UA conformant without human review.
 
 ## 2. Problem Statement
 
@@ -16,7 +16,7 @@ Government organizations publish born-digital, scanned, and mixed PDFs. Many fil
 
 Existing automated products demonstrate that PDFs can be auto-tagged, but the source research states that auto-tagging is not the same as accessibility compliance. Machine validators can confirm technical rules while still missing incorrect headings, weak alternative text, illogical reading order, or inaccurate table relationships. Doing nothing leaves inaccessible content in publication workflows, increases manual remediation effort, and leaves government customers without a repeatable way to measure or improve PDF accessibility.
 
-The commercial opportunity is a per-page service. The variable OCR cost identified in the source is approximately $0.004 per page. PDFix Enterprise is expected to use a fixed or instance-based commercial license, while veraPDF has no per-page license cost. This cost shape could support a customer price materially above the direct processing cost, subject to final vendor quotes and payment fees.
+The commercial opportunity is a per-page service. The research in `docs/research/` estimates variable processing cost at about $0.0066 per page with hosted services (Mistral OCR 4.1 plus Claude Haiku 5.5), or about $0.002 per page with a self-hosted reader. The tag writer, veraPDF, OCRmyPDF and PDFium carry no licence fee. The target is a gross margin of 90% or better. Card fees include a fixed amount per transaction, so small orders will need a minimum charge or another payment model (OQ-02).
 
 ## 3. Goals / Non-Goals
 
@@ -28,9 +28,10 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 - Place a payment Authorization before starting paid remediation, Capture it only when the Job is Completed, and Release it otherwise (ADR 0002).
 - Preserve the original visible page content.
 - Support born-digital, scanned, and mixed PDFs through a page-aware processing pipeline.
-- Use Mistral OCR 4.1 to identify text blocks, structural labels, geometry, confidence, and reading order.
+- Use one document-understanding reader (Mistral OCR 4.1 or PaddleOCR-VL-1.6, chosen by the T-005 benchmark) to identify text blocks, structural labels, geometry, confidence, and reading order, and Claude Haiku 5.5 to assign heading levels and list structure and to draft alt text.
 - Normalize model output into a vendor-neutral accessibility IR owned by the product.
-- Use PDFix Enterprise to add or modify accessibility information in the original PDF.
+- Use the service's own tag writer to add a new tag tree to a copy of the original PDF without changing its page content (ADR 0003).
+- Accept only Documents that carry a Public-release attestation (ADR 0004).
 - Validate the output with veraPDF.
 - Deliver the remediated PDF only when it passes both Visual preservation and veraPDF validation, with a report that distinguishes technical validation, visual preservation, per-Element confidence, and manual-review recommendations.
 - Record enough stage-level data to diagnose failures without logging customer document content.
@@ -42,9 +43,11 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 - The MVP will not include an in-browser PDF tag-tree editor or manual remediation workstation.
 - The MVP will not process multiple uploaded PDFs in one order.
 - The MVP will not expose a public bulk-processing API.
-- The MVP will not self-host GLM-OCR, PaddleOCR-VL, DeepSeek-OCR, Docling, or MinerU.
+- The MVP will not decide in advance between a hosted and a self-hosted reader; the T-005 benchmark chooses between Mistral OCR 4.1 and a self-hosted PaddleOCR-VL-1.6 on quality, speed and cost per page. GLM-OCR, DeepSeek-OCR, Docling and MinerU are not MVP readers.
 - The MVP will not use Adobe Auto-Tag as its production remediation engine.
-- The MVP will not build a PDF tagging engine directly on Apache PDFBox.
+- The MVP will not buy a commercial tagging SDK (PDFix, Apryse, Aspose) unless the ADR 0003 trigger is met.
+- The MVP will not process Documents that are not intended for public release; a private pipeline is phase 2 (ADR 0004).
+- The MVP will not offer subscriptions, prepaid page credits, or a minimum charge; pricing models are decided after the pipeline works (OQ-02).
 - The MVP will not embed PAC 2026 in the hosted service.
 - The MVP will not include a human-verified paid tier.
 - The MVP will not recreate a PDF from Markdown, HTML, or model-generated page content.
@@ -55,15 +58,15 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 |---|---|---|
 | SC-01 | A customer can complete the primary path. | Upload, quote, payment, processing, report, and download succeed in an end-to-end test. |
 | SC-02 | Pricing is deterministic. | For every accepted test file, displayed subtotal equals persisted page count multiplied by the active per-page price in cents. |
-| SC-03 | Unauthorized jobs do not consume paid remediation services. | No Mistral or PDFix stage begins until the payment record is in `Authorized` state. |
+| SC-03 | Unauthorized jobs do not consume paid remediation services. | No reader, Haiku, or tag-writer stage begins until the payment record is in `Authorized` state. |
 | SC-04 | Visible content is preserved. | Input and output pages rendered by the same renderer at the same resolution produce a pixel mismatch ratio of `0.0000`; any non-zero result is reported and prevents a `Completed` status. |
 | SC-05 | Technical validation is reported honestly. | Every job that reaches validation records the veraPDF profile, pass/fail result, rule-failure count, Repair passes used, and raw report file; no job with remaining Validation failures becomes `Completed`. |
 | SC-06 | Low-confidence work is visible. | Every block below the configured confidence threshold creates a review item with page number, type, and confidence. |
-| SC-07 | Variable OCR cost is observable. | Each completed Mistral stage records pages submitted and estimated OCR cost using the configured provider rate; the source baseline is `$0.004/page`. |
-| SC-08 | Failure handling is testable. | Automated tests cover invalid, encrypted, and signed PDFs, authorization failure, Mistral timeout, PDFix failure, veraPDF failure after Repair passes, authorization-expiry release, cancellation, and unavailable download. |
+| SC-07 | Variable processing cost is observable. | Each completed reader and Haiku stage records pages or tokens submitted and estimated cost using the configured provider rates; a self-hosted reader records GPU seconds and an estimated cost per page. |
+| SC-08 | Failure handling is testable. | Automated tests cover invalid, encrypted, and signed PDFs, authorization failure, reader timeout, Haiku timeout, tag-writer failure, veraPDF failure after Repair passes, authorization-expiry release, cancellation, and unavailable download. |
 | SC-11 | Customers are never charged for undelivered output. | Every `Failed` or `Cancelled` job ends with its Authorization `Released` and no Capture. |
 | SC-09 | The customer interface is accessible. | MVP screens pass automated WCAG 2.1 AA checks and a documented keyboard-only test of the primary path. |
-| SC-10 | The eight-week release is supportable. | A new operator can use the runbook to identify a failed stage, retry an eligible job, or issue the documented manual fallback within 15 minutes. `[ASSUMPTION]` |
+| SC-10 | The first release is supportable. | A new operator can use the runbook to identify a failed stage, retry an eligible job, or issue the documented manual fallback within 15 minutes. `[ASSUMPTION]` |
 
 ## 5. Users & Roles
 
@@ -79,14 +82,15 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 | Area | MVP | Phase 2 | Explicitly Out of Scope |
 |---|---|---|---|
 | Customer workflow | Individual account, single PDF upload, page-count quote, payment authorization, cancel while queued, status, report, download | Saved payment methods, order history filters, organization accounts | Anonymous public processing `[ASSUMPTION]` |
-| Pricing | One configurable per-page price; one currency `[ASSUMPTION]` | Volume tiers, contracts, coupons, tax calculation, minimum charges | Negotiated enterprise billing in the MVP |
+| Pricing | One configurable per-page price; one currency `[ASSUMPTION]` | Volume tiers, contracts, coupons, tax calculation, minimum charges, subscriptions, prepaid page credits | Negotiated enterprise billing in the MVP |
 | Document input | Born-digital, scanned, and mixed PDFs; one file per order; fillable forms accepted but fields left unremediated | Batch ZIP, portfolio PDFs, public API, form-field remediation | Non-PDF input; password-protected, permission-restricted, or digitally signed PDFs |
-| Understanding | Mistral OCR 4.1 blocks, labels, confidence, and reading order | GLM-OCR, PaddleOCR-VL, Docling, MinerU, ensemble routing | LayoutParser-based primary pipeline |
-| Remediation | PDFix Enterprise applied to the original PDF | Compare PDFix, Apryse, and Foxit; optional PDFBox engine | Rebuilding pages from HTML or Markdown |
+| Understanding | One reader chosen by the T-005 benchmark (Mistral OCR 4.1 or self-hosted PaddleOCR-VL-1.6) for blocks, labels, confidence, and reading order, plus Claude Haiku 5.5 for heading levels, lists, and alt text | The other reader as a second adapter; ensemble routing | LayoutParser-based primary pipeline; GLM-OCR (too few structural labels for tagging) |
+| Remediation | The service's own tag writer (built on PdfPig) applied to a copy of the original PDF (ADR 0003); OCRmyPDF adds the invisible text layer on image-only pages | Wider writer coverage (Form XObject content, optional content, form fields); Aspose.PDF if the ADR 0003 trigger is met | Rebuilding pages from HTML or Markdown |
 | Validation | veraPDF, custom confidence rules, pixel comparison | Adobe checker, PAC-assisted QA, semantic second-pass model, NVDA/JAWS test service | Claiming machine validation replaces human review |
 | Accessibility structures | Headings, paragraphs, lists, tables, figures with model-drafted alt text, artifacts, reading order, document title/language when the IR provides them; existing tag trees are replaced (ADR 0001) | Interactive corrections, advanced formula/MathML review, table repair UI | Human-authored remediation in the MVP |
 | Service tiers | Automated remediation | Complex-document pricing, verified human review, bulk/API, government annual plans | Human review bundled into every MVP order |
-| Operations | Single deployment with one or more licensed workers `[ASSUMPTION]` | Autoscaling and multi-region operation | Unlicensed elastic PDFix worker creation |
+| Operations | Single deployment as Docker Compose, which also runs on the developer's desktop with a GPU `[ASSUMPTION]` | Autoscaling and multi-region operation | — |
+| Data handling | Documents with a Public-release attestation, processed by third-party services (ADR 0004) | Private pipeline using a self-hosted reader and alt-text model | Documents that may not be shared with third-party processors |
 
 ## 7. User Stories & Acceptance Criteria
 
@@ -111,7 +115,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 *As a customer, I want to upload one PDF, so that the service can inspect it and calculate a price.*
 
-**Depends on:** FR-03, FR-04, FR-05, FR-20
+**Depends on:** FR-03, FR-04, FR-05, FR-20, FR-47
 
 **Acceptance criteria**
 
@@ -122,6 +126,7 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 5. **Given** preflight cannot read page count, **when** the parser fails, **then** the customer sees a retry option and no amount is charged.
 6. **Given** a PDF is password-protected, permission-restricted, or digitally signed, **when** preflight runs, **then** the document is marked `Rejected`, no quote is created, and the customer is told why (for a signed PDF: remediation would invalidate the signature).
 7. **Given** preflight runs, **when** it finishes, **then** it has performed no rendering, OCR, or other processing beyond what is needed to validate the file and count its pages.
+8. **Given** a customer uploads a PDF, **when** they have not confirmed the Public-release attestation, **then** the upload is refused; **when** they confirm it, **then** the attestation time is stored on the Document (ADR 0004).
 
 #### US-03 — Review a page-count quote
 
@@ -162,20 +167,20 @@ The commercial opportunity is a per-page service. The variable OCR cost identifi
 
 *As a customer, I want my PDF processed once payment is authorized without changing its visible pages, so that I receive a more accessible version of the same document.*
 
-**Depends on:** FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-41, FR-42, FR-43, FR-44
+**Depends on:** FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-41, FR-42, FR-43, FR-44, FR-48, FR-49
 
 **Acceptance criteria**
 
 1. **Given** a payment is `Authorized` and no job exists for the quote, **when** the queue action commits, **then** one job enters `Queued` state.
 2. **Given** a queued job, **when** a worker claims it, **then** only that worker can execute the current attempt and the job moves to `Preprocessing`.
 3. **Given** native text and graphic Source objects, **when** preprocessing completes, **then** the system retains their references and produces page renders for model analysis.
-4. **Given** image-only Source objects (such as a scanned page), **when** preprocessing completes, **then** the system prepares those regions for OCR text-layer and tag generation.
+4. **Given** image-only Source objects (such as a scanned page), **when** preprocessing completes, **then** OCRmyPDF adds an invisible text layer to those pages without changing how they render, and the regions are prepared for tag generation.
 5. **Given** preprocessing completes, **when** the job record is updated, **then** it stores one descriptive Document classification (`born-digital`, `scanned`, or `mixed`) derived from the Source objects; the classification does not change price or processing route.
-6. **Given** preprocessing succeeds, **when** Mistral is called, **then** block geometry, text, reading order, labels, and available confidence values are normalized into the IR.
-7. **Given** the IR is valid, **when** PDFix remediation runs, **then** it edits accessibility structures in a copy of the original PDF and does not regenerate visible pages.
+6. **Given** preprocessing succeeds, **when** the reader runs, **then** block geometry, text, reading order, labels, and available confidence values are normalized into the IR, and Claude Haiku 5.5 adds heading levels, list structure, and alt-text drafts.
+7. **Given** the IR is valid, **when** the tag writer runs, **then** it adds accessibility structures to a copy of the original PDF by wrapping existing content in marked-content sequences, and does not regenerate or rewrite visible page content.
 8. **Given** a provider or worker timeout occurs, **when** the attempt ends, **then** the stage is recorded as transiently failed and retried according to INT-01 or INT-02 without creating another charge.
-9. **Given** the IR cannot be mapped to source objects or PDFix reports an unrecoverable file error, **when** remediation stops, **then** the job becomes `Failed`, the original file remains unchanged, the Authorization is Released, and the customer receives a Failure report.
-10. **Given** the input already has a structure tree, **when** PDFix remediation runs, **then** the existing tree is replaced from the IR and the report records that the original was tagged (ADR 0001).
+9. **Given** the IR cannot be mapped to source objects or the tag writer reports unsupported content or an unrecoverable file error, **when** remediation stops, **then** the job becomes `Failed`, the original file remains unchanged, the Authorization is Released, and the customer receives a Failure report.
+10. **Given** the input already has a structure tree, **when** the tag writer runs, **then** the existing tree is replaced from the IR and the report records that the original was tagged (ADR 0001).
 11. **Given** an informative Figure, **when** the IR is built, **then** alt text is drafted by the model and a Review item of type `AltText` is created for it.
 12. **Given** a page has fillable form fields, **when** remediation runs, **then** the fields are left unchanged and a Review item of type `FormField` is created for that page.
 13. **Given** a job is not `Completed` 24 hours before its Authorization expires, **when** the expiry check runs, **then** the job becomes `Failed` with category `processing_timeout`, and the Authorization is Released. `[ASSUMPTION]`
@@ -218,7 +223,7 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 
 **Acceptance criteria**
 
-1. **Given** PDFix produces an output PDF, **when** veraPDF validation completes, **then** the system records the validation profile, pass/fail status, and every reported rule failure.
+1. **Given** the tag writer produces an output PDF, **when** veraPDF validation completes, **then** the system records the validation profile, pass/fail status, and every reported rule failure.
 2. **Given** input and output renders are compared, **when** any pixel differs, **then** Visual preservation fails, the job becomes `Failed`, the Authorization is Released, and no output is offered.
 3. **Given** veraPDF reports Validation failures, **when** Repair passes remain (maximum 3), **then** the next Repair pass runs, escalating from targeted fix-ups to structural fallbacks to re-analysis of affected pages, and is recorded as an Attempt. `[ASSUMPTION]`
 4. **Given** a Repair pass applies a structural fallback (for example a table simplified to paragraphs), **when** the report is built, **then** a Review item of type `StructuralFallback` records what was simplified and where.
@@ -300,18 +305,18 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 | FR-10 | The system shall treat a signed payment-provider event, not the browser return, as confirmation of Authorization. `[ASSUMPTION]` | US-04 |
 | FR-11 | The system shall reject payment events with invalid signature, unknown provider ID, duplicate event ID, or mismatched amount/currency. `[ASSUMPTION]` | US-04 |
 | FR-12 | The system shall create at most one remediation job per Authorized quote. | US-04 |
-| FR-13 | The system shall start Mistral or PDFix processing only after the related payment status is `Authorized`. | US-05 |
+| FR-13 | The system shall start reader, Haiku, or tag-writer processing only after the related payment status is `Authorized`. | US-05 |
 | FR-14 | The system shall decide OCR per Source object (native text kept, image-only regions OCR'd) and record one descriptive Document classification (`born-digital`, `scanned`, or `mixed`) during preprocessing. `[ASSUMPTION]` | US-05 |
 | FR-15 | The system shall render each input page at one configured resolution using one pinned renderer version for later model input and visual comparison. `[ASSUMPTION]` | US-05 |
-| FR-16 | The system shall submit page content to Mistral OCR 4.1 and request block-level output that includes available text, labels, bounding boxes, reading order, and confidence. | US-05 |
-| FR-17 | The system shall normalize Mistral output into the Accessibility IR and shall validate the IR against a versioned schema before PDFix execution. | US-05 |
+| FR-16 | The system shall submit page content to the configured reader (Mistral OCR 4.1 or PaddleOCR-VL-1.6) and request block-level output that includes available text, labels, bounding boxes, reading order, and confidence. | US-05 |
+| FR-17 | The system shall normalize reader and Haiku output into the Accessibility IR and shall validate the IR against a versioned schema before the tag writer runs. | US-05 |
 | FR-18 | The system shall preserve native text/object references for born-digital content and shall use OCR-derived accessible text only for image-only regions. | US-05 |
-| FR-19 | The system shall use PDFix Enterprise to modify a copy of the original PDF's accessibility structures rather than recreate visible pages. | US-05 |
+| FR-19 | The system shall use its own tag writer to add a new tag tree to a copy of the original PDF, inserting marked-content operators around existing content and saving incrementally, rather than recreating visible pages (ADR 0003). | US-05 |
 | FR-20 | The system shall reject files outside configured byte or page limits, and password-protected, permission-restricted, or digitally signed files, before payment, without rendering or OCR. `[ASSUMPTION]` | US-02 |
 | FR-21 | The system shall isolate customer data by user and use non-sequential public identifiers. `[ASSUMPTION]` | US-01 |
 | FR-22 | The system shall map internal stages to customer-facing states: `Queued`, `Analyzing`, `Remediating`, `Validating`, `Preparing results`, `Completed`, `Failed`, or `Cancelled`. `[ASSUMPTION]` | US-06 |
 | FR-23 | The system shall make persisted job status available to the owner without exposing provider payloads or stack traces. | US-06 |
-| FR-24 | The system shall run veraPDF against every PDFix output before completion. | US-07 |
+| FR-24 | The system shall run veraPDF against every tag-writer output before completion. | US-07 |
 | FR-25 | The system shall render and compare every input and output page with identical settings and record pixel mismatch count and ratio. | US-07 |
 | FR-26 | The system shall create Review items for IR Elements below the job's stored confidence threshold, drafted alt text, structural fallbacks, and pages with form fields. Validation failures are reported separately, not as Review items. | US-07 |
 | FR-27 | The system shall never label an automated output `ADA compliant`, `WCAG compliant`, or `PDF/UA compliant` solely because automated checks pass. | US-07 |
@@ -323,7 +328,7 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 | FR-33 | The system shall allow an operator to retry eligible failures without creating a new order or charge. `[ASSUMPTION]` | US-09 |
 | FR-34 | The system shall allow an administrator to configure a positive whole-cent price per page and one ISO 4217 currency. `[ASSUMPTION]` | US-10 |
 | FR-35 | The system shall snapshot active processing settings onto a job when the job is queued. `[ASSUMPTION]` | US-10 |
-| FR-36 | The system shall expose health state for the database, file storage, payment adapter, Mistral adapter, PDFix worker, and veraPDF executable without exposing secrets. `[ASSUMPTION]` | US-10 |
+| FR-36 | The system shall expose health state for the database, file storage, payment adapter, reader adapter, Haiku adapter, OCRmyPDF executable, and veraPDF executable without exposing secrets. `[ASSUMPTION]` | US-10 |
 | FR-37 | The system shall create append-only audit events for security, commercial, processing, download, retry, configuration, and deletion actions. `[ASSUMPTION]` | US-11 |
 | FR-38 | The system shall assign one correlation ID to each request and carry the job correlation ID through background stages and integration calls. `[ASSUMPTION]` | US-11 |
 | FR-39 | The system shall run up to 3 Repair passes when veraPDF reports Validation failures, escalating from targeted fix-ups to structural fallbacks to re-analysis, and fail the job if failures remain. `[ASSUMPTION]` | US-07 |
@@ -334,6 +339,9 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 | FR-44 | The system shall accept PDFs with fillable form fields, leave the fields unchanged, and raise a Review item for each page that has them. | US-05 |
 | FR-45 | The system shall let the owner cancel a job only while it is `Queued`. | US-12 |
 | FR-46 | The system shall produce a customer-safe Failure report, with failure categories and page numbers, for every `Failed` job. | US-06, US-07 |
+| FR-47 | The system shall refuse an upload until the customer confirms the Public-release attestation, and shall store its time on the Document. | US-02 |
+| FR-48 | The system shall send each page image and the reader's blocks to Claude Haiku 5.5 and accept only schema-valid JSON for heading levels, list structure, table header hints, and alt-text drafts. | US-05 |
+| FR-49 | The system shall add an invisible OCR text layer with OCRmyPDF only to pages without native text, and the visual diff shall still report `0.0000` for those pages. | US-05 |
 
 ## 9. Data Model
 
@@ -382,6 +390,7 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 | `PageCount` | int | Yes | Positive after preflight. |
 | `PreflightStatus` | enum | No | `Uploaded`, `Inspecting`, `Accepted`, `Rejected`, `Failed`. |
 | `RejectionCode` | string(50) | Yes | Required when status is `Rejected`; includes `encrypted`, `restricted`, and `signed`. |
+| `PublicReleaseAttestedAtUtc` | timestamp | Yes | Required before Preflight starts (ADR 0004). |
 | `CreatedAtUtc` | timestamp | No | Set once. |
 | `ExpiresAtUtc` | timestamp | No | Derived from active retention setting. `[ASSUMPTION]` |
 
@@ -434,8 +443,9 @@ A job is `Completed` only when its output passes both Visual preservation and ve
 | `IrSchemaVersion` | string(20) | No | Example: `1.0`. `[ASSUMPTION]` |
 | `ConfidenceThreshold` | decimal(5,4) | No | Range `0.0000–1.0000`; snapshot. |
 | `RenderDpi` | int | No | Snapshot; default pending OQ-10. |
-| `MistralRatePerPage` | decimal(10,6) | No | Source baseline `0.004000`. |
-| `EstimatedOcrCost` | decimal(12,4) | Yes | Page count × stored rate. |
+| `ReaderProvider` | enum | No | `MistralOcr41` or `PaddleOcrVl16`; snapshot. |
+| `ReaderRatePerPage` | decimal(10,6) | No | Snapshot of the configured rate; for a self-hosted reader, the estimated GPU cost per page. |
+| `EstimatedProcessingCost` | decimal(12,4) | Yes | Reader cost plus Haiku cost. |
 | `CorrelationId` | string(64) | No | Indexed. |
 | `FailureCategory` | string(50) | Yes | Customer-safe mapped category. |
 | `QueuedAtUtc` | timestamp | No | Set once. |
@@ -564,7 +574,7 @@ erDiagram
 - Stored file kinds listed above.
 - One administrator account created through deployment procedure, not a hard-coded password. `[ASSUMPTION]`
 - No default production price. Ordering remains disabled until an administrator sets price and currency. `[ASSUMPTION]`
-- Initial OCR rate reference: `0.004000` currency units per page, from the source research.
+- Initial reader rate references: Mistral OCR 4.1 `0.004000` per page; PaddleOCR-VL-1.6 set from the T-005 GPU measurement.
 
 ## 10. Integrations & Interfaces
 
@@ -572,26 +582,28 @@ erDiagram
 
 | ID | Integration | Required behavior |
 |---|---|---|
-| INT-01 | Mistral OCR 4.1 | Submit rendered/native page inputs, request block output, capture request ID, normalize results, and retry transient failures at most two times with exponential delays of 2 and 8 seconds. `[ASSUMPTION]` |
-| INT-02 | PDFix Enterprise | Run under a commercial SaaS-capable license, consume the IR or an adapter-produced layout template, replace the structure tree in a copy of the original PDF, apply Repair-pass fix-ups, and retry a process crash once. `[ASSUMPTION]` |
+| INT-01 | Document-understanding reader | Run the configured reader, Mistral OCR 4.1 (API) or PaddleOCR-VL-1.6 (self-hosted container). Submit rendered/native page inputs, request block output, capture request ID, normalize results, and retry transient failures at most two times with exponential delays of 2 and 8 seconds. `[ASSUMPTION]` |
+| INT-02 | Tag writer (in process) | The service's own .NET module built on PdfPig (ADR 0003). Consume the validated IR, discard any existing tag tree, wrap the mapped content in `BDC`/`EMC` with MCIDs, build StructTreeRoot, ParentTree, RoleMap, and PDF/UA metadata, apply Repair-pass fix-ups, and save incrementally to a copy. Unsupported content (for example Form XObject content, Type 3 fonts, or optional content) produces a stable error code that fails the job instead of being guessed. `[ASSUMPTION]` |
 | INT-03 | veraPDF | Run locally as a pinned executable/container, use the configured PDF/UA profile, emit machine-readable output, and never retry a deterministic validation failure. `[ASSUMPTION]` |
 | INT-04 | Payment provider | Create hosted checkout with manual capture, verify signed events, Capture or Release each Authorization exactly once, use idempotency keys, and never store card data. Provider is not selected in the source; see OQ-03. `[ASSUMPTION]` |
 | INT-05 | File storage | Store private objects by opaque key, deny public listing, and serve downloads only after application authorization. Storage product is not selected; see OQ-06. `[ASSUMPTION]` |
+| INT-06 | Claude Haiku 5.5 | Send each page image with the reader's blocks; receive schema-validated JSON with heading levels, list structure, table header hints, and alt-text drafts for Figures. Same timeout and retry policy as INT-01. `[ASSUMPTION]` |
+| INT-07 | OCRmyPDF + Tesseract | Run as a pinned container command during Preprocessing, only on pages without native text, adding an invisible text layer without re-rasterizing. `[ASSUMPTION]` |
 
-### 10.2 Mistral OCR 4.1
+### 10.2 Document-understanding reader and Haiku
 
 | Attribute | Requirement |
 |---|---|
-| Purpose | OCR, layout understanding, block labels, reading order, tables, images, equations, confidence where available, and drafted alt text for Figures (annotation mode). |
-| Authentication | API credential supplied through deployment secret configuration. Exact scheme is not addressed in source material — see OQ-05. |
+| Purpose | Reader: OCR, layout understanding, block labels, reading order, tables, images, equations, and confidence where available. Claude Haiku 5.5: heading levels, list structure, table header hints, and drafted alt text for Figures. |
+| Authentication | Mistral and Anthropic API credentials supplied through deployment secret configuration; the self-hosted reader needs none. Contract terms are open — see OQ-05. |
 | Endpoint | Not addressed in source material — see OQ-05. The endpoint must be configuration, not source code. |
-| Source cost | Approximately `$4/1,000 pages`, equal to `$0.004/page`; annotated processing was described as approximately `$5/1,000 pages`. |
+| Source cost | Mistral OCR 4.1 `$4/1,000 pages` (`$0.004/page`). Claude Haiku 5.5 about `$0.001/page` for one page image and about 1,500 output tokens. PaddleOCR-VL-1.6 costs GPU time only, estimated at about `$0.001/page` on rented serverless GPUs, to be measured in T-005. See `docs/research/pdf-tagging-round-2.md` and `pdf-tagging-round-3.md`. |
 | Rate limit | Not addressed in source material — see OQ-05. Worker concurrency shall be configurable and default to one until confirmed. `[ASSUMPTION]` |
 | Timeout | 120 seconds per provider request. `[ASSUMPTION]` |
 | Retry | HTTP `408`, `429`, and `5xx`, plus network timeouts, at most two retries. Honor `Retry-After` when present. `[ASSUMPTION]` |
 | No retry | Authentication failure, rejected input, malformed success payload, or exhausted retries. `[ASSUMPTION]` |
 
-The adapter shall convert provider output into this internal contract. This is not asserted to be Mistral's wire format.
+The adapter shall convert provider output into this internal contract. This is not asserted to be any provider's wire format.
 
 ```json
 {
@@ -622,14 +634,14 @@ The adapter shall convert provider output into this internal contract. This is n
 
 Allowed initial semantic mappings include `Document`, `Sect`, `H1`–`H6`, `P`, `L`, `LI`, `Lbl`, `LBody`, `Table`, `TR`, `TH`, `TD`, `Figure`, `Caption`, `Formula`, `Link`, `Note`, and `Artifact`. `[ASSUMPTION]`
 
-### 10.3 PDFix Enterprise
+### 10.3 Tag writer
 
 | Attribute | Requirement |
 |---|---|
 | Purpose | Replace any existing tag tree (ADR 0001) and apply reading order, tables, lists, figures, artifacts, MCIDs, alternative text, language, title, and PDF/UA-related changes to the original PDF copy. |
-| Authentication/license | PDFix license material supplied as a deployment secret or licensed runtime file. Exact activation mechanism is not addressed in source material — see OQ-04. |
-| Endpoint | In-process SDK or isolated local worker interface; final deployment model is blocked by licensing terms — see OQ-04. |
-| Rate limit | Determined by licensed instance/worker count. The application must not exceed licensed concurrency. |
+| Implementation | In-process .NET module built on PdfPig (MIT), behind one interface: IR plus original PDF in, tagged PDF plus diagnostics out (ADR 0003). It changes the original content-stream bytes only by inserting marked-content operators, so page rendering is unchanged. |
+| Licence | None. Buying Aspose.PDF for .NET instead is the ADR 0003 fallback; see OQ-04. |
+| Rate limit | None; bounded by worker CPU and memory. |
 | Timeout | 10 minutes per document. `[ASSUMPTION]` |
 | Retry | One retry for process crash or infrastructure interruption; no automatic retry for deterministic mapping or malformed-PDF error. `[ASSUMPTION]` |
 | Output | Remediated PDF plus adapter diagnostics containing applied/skipped element counts and stable error codes. `[ASSUMPTION]` |
@@ -797,10 +809,10 @@ Every form shall place an error summary before the form, link each message to it
 |---|---|
 | NFR-01 | The upload endpoint shall accept files up to `100 MB` and the preflight shall accept up to `200 pages` per document for MVP. `[ASSUMPTION]` |
 | NFR-02 | For a `30-page`, `25 MB` test PDF on the production-equivalent environment, preflight shall finish within 60 seconds at the 95th percentile. `[ASSUMPTION]` |
-| NFR-03 | For the same test class, 95% of jobs shall reach a terminal state within 15 minutes, excluding provider outages and queue time caused by licensed concurrency. `[ASSUMPTION]` |
+| NFR-03 | For the same test class, 95% of jobs shall reach a terminal state within 15 minutes, excluding provider outages and queue time caused by configured concurrency. `[ASSUMPTION]` |
 | NFR-04 | Authenticated status and dashboard requests shall return within 2 seconds at the 95th percentile under 20 concurrent interactive users. `[ASSUMPTION]` |
-| NFR-05 | The MVP shall support 1,000 stored orders and 30,000 processed pages per month without schema or code changes; capacity above that requires load testing and license review. `[ASSUMPTION]` |
-| NFR-06 | Worker concurrency shall default to one and shall never exceed the active PDFix licensed instance count. `[ASSUMPTION]` |
+| NFR-05 | The MVP shall support 1,000 stored orders and 30,000 processed pages per month without schema or code changes; capacity above that requires load testing. `[ASSUMPTION]` |
+| NFR-06 | Worker concurrency shall be configurable and default to one. `[ASSUMPTION]` |
 | NFR-07 | Customer status polling shall occur no more often than once every 15 seconds. `[ASSUMPTION]` |
 
 ### 12.2 Security and authentication
@@ -861,13 +873,14 @@ Every form shall place an error summary before the form, link each message to it
 ### 13.1 Constraints
 
 - The implementation platform is .NET.
-- The delivery team is two junior developers.
-- The MVP schedule is eight weeks.
-- Mistral OCR 4.1 is the sole production OCR/document-understanding provider for the MVP.
-- PDFix Enterprise is the sole production PDF remediation engine for the MVP.
+- The delivery team is one developer.
+- T-005 is a fixed two-week spike; the schedule after it is re-estimated from its results.
+- The MVP uses one production reader, Mistral OCR 4.1 or PaddleOCR-VL-1.6, chosen by the T-005 benchmark, plus Claude Haiku 5.5.
+- The service's own tag writer is the sole production remediation engine for the MVP (ADR 0003).
 - veraPDF is the sole automated PDF/UA validator for the MVP.
-- PDFix use is subject to a commercial license that permits a paid SaaS and the selected worker/deployment model.
-- OCR variable cost is modeled from the source value of `$0.004/page`; vendor pricing may change before launch.
+- Documents are processed by third-party services, so the MVP accepts only Documents with a Public-release attestation (ADR 0004).
+- Variable processing cost is modeled at about `$0.0066/page` hosted or about `$0.002/page` self-hosted (`docs/research/`); the target gross margin is 90% or better.
+- The whole pipeline must run on a developer desktop (Docker Desktop with WSL2 GPU) as well as on a server.
 - The service must change accessibility data without intentionally changing rendered pages.
 - Machine validation cannot prove semantic correctness or legal compliance.
 - Checkout can offer only payment methods that support authorize-then-capture, and every job must finish within the provider's authorization window.
@@ -895,10 +908,10 @@ Every assumption below is a default required to begin implementation and require
 | A-15 | Rendering uses one pinned engine and configured resolution; the exact engine and DPI require OQ-10. |
 | A-16 | Visual preservation requires a mismatch ratio of exactly `0.0000`; otherwise the job fails. |
 | A-17 | Customer status refreshes at most every 15 seconds. |
-| A-18 | Mistral requests time out after 120 seconds and retry at most twice for transient conditions. |
-| A-19 | PDFix runs time out after 10 minutes and retry once only for an infrastructure failure. |
+| A-18 | Reader and Haiku requests time out after 120 seconds and retry at most twice for transient conditions. |
+| A-19 | Tag-writer runs time out after 10 minutes and retry once only for an infrastructure failure. |
 | A-20 | veraPDF runs time out after 5 minutes and retry once only if no valid report is produced. |
-| A-21 | Worker concurrency defaults to one and is capped by PDFix licensing. |
+| A-21 | Worker concurrency defaults to one and is configurable. |
 | A-22 | A 30-page/25 MB preflight has a 60-second p95 target; a complete job has a 15-minute p95 target under stated exclusions. |
 | A-23 | MVP capacity target is 1,000 orders and 30,000 pages per month. |
 | A-24 | Customer and derived files are privately stored and encrypted at rest. |
@@ -915,8 +928,8 @@ Every assumption below is a default required to begin implementation and require
 | A-35 | The application exposes the customer, payment-event, download, delete, operator, and administrator routes listed in Sections 10 and 11; route names may change only through an approved API-contract update. |
 | A-36 | Internal stages map to the customer-facing states listed in FR-22; status failures show no stale state as current, and customers receive only sanitized failure categories. |
 | A-37 | Append-only audit events, correlation IDs, structured logs, dependency health states, metrics, and provider request IDs are the MVP observability model. |
-| A-38 | The Accessibility IR begins at schema version `1.0`, supports the initial semantic roles listed in Section 10.2, and uses the PDFix request/response diagnostics shown in Section 10.3. |
-| A-39 | Failures are classified as retryable or non-retryable. Mistral retries `408`, `429`, network timeouts, and `5xx` responses; deterministic parser, IR, PDFix mapping, veraPDF rule, and visual-diff failures do not retry automatically. |
+| A-38 | The Accessibility IR begins at schema version `1.0`, supports the initial semantic roles listed in Section 10.2, and uses the tag-writer request/response diagnostics shown in Section 10.3. |
+| A-39 | Failures are classified as retryable or non-retryable. The reader and Haiku adapters retry `408`, `429`, network timeouts, and `5xx` responses; deterministic parser, IR, tag-writer mapping, unsupported content, veraPDF rule, and visual-diff failures do not retry automatically. |
 | A-40 | TLS 1.2+, framework password hashing, lockout, anti-forgery tokens, signed payment events, least-privilege workers, secret-store configuration, content-free logs, and private no-store downloads are mandatory MVP security controls. |
 | A-41 | Forms use linked error summaries and focus management; live status changes are announced without moving focus; automated and manual accessibility checks follow NFR-17 through NFR-21. |
 | A-42 | Authenticated interactive requests have a 2-second p95 target under 20 concurrent users. |
@@ -925,28 +938,30 @@ Every assumption below is a default required to begin implementation and require
 | A-45 | Payment, authorization, PDF, IR, storage, and retention changes require senior review; CI permits no new compiler/static-analysis warnings at the configured level. |
 | A-46 | Entity field lengths, nullability, denormalized owner key, unique constraints, indexes, stored file metadata, and configuration seed rules are those specified in Section 9 until an approved schema change replaces them. |
 | A-47 | An operator can diagnose, retry, or select the manual fallback for a failed job within 15 minutes by following the runbook. |
-| A-48 | MVP uses one deployment and one or more explicitly licensed workers; elastic or multi-region worker creation is deferred. |
+| A-48 | MVP uses one deployment and one or more workers; elastic or multi-region worker creation is deferred. |
 | A-49 | A job may use at most 3 Repair passes; re-analysis OCR cost is absorbed by the service and recorded per job. |
 | A-50 | A job not `Completed` 24 hours before its Authorization expires is Failed and Released. |
-| A-51 | Alt text is drafted using Mistral annotation mode (source estimate about `$5/1,000 pages`). |
+| A-51 | Alt text is drafted by Claude Haiku 5.5, in the same call that assigns heading levels and list structure (about `$0.001/page`). |
+| A-52 | The customer is responsible for the Public-release attestation; the service does not detect non-public content (ADR 0004). |
 
 ## 14. Risks & Dependencies
 
 | Risk or dependency | Likelihood | Impact | Mitigation | Owner / approval |
 |---|---|---|---|---|
-| PDFix license does not permit the intended SaaS, container, or worker model, or its price breaks unit economics. | Medium | Critical | Obtain written quote and SaaS/output rights before PDFix-dependent implementation; compare Apryse and Foxit if terms fail. | Product owner, procurement, legal |
-| PDFix cannot consume the normalized IR with enough source-object fidelity. | Medium | Critical | Build a week-one vertical spike using representative born-digital and scanned PDFs; stop and reassess if mapping fails. | Technical lead, PDFix vendor |
-| Mistral output omits or misclassifies structure needed for correct tags. | High | High | Store provider output and normalized IR as separate files; create review items; keep adapter replaceable; benchmark representative corpus. | Product owner, technical lead |
+| Our tag writer cannot reach a `0.0000` visual diff and a veraPDF pass on simple born-digital and scanned pages within the two-week T-005 spike. | Medium | Critical | Time-boxed spike, with Aspose.PDF under a 30-day licence as the yardstick; buy Aspose if the ADR 0003 trigger is met. | Developer |
+| The writer's supported coverage is too narrow, so many real Documents fail without charge. | High | High | Fail unsupported content cleanly (ADR 0002 releases the hold); grow coverage from the corpus and the failure log; measure the failure rate in T-005. | Developer |
+| Published reader benchmarks are self-reported or out of date and overstate quality. | Medium | High | T-005 benchmarks both readers on the annotated corpus before one is chosen. | Developer |
+| Reader or Haiku output omits or misclassifies structure needed for correct tags. | High | High | Store provider output and normalized IR as separate files; create review items; keep adapter replaceable; benchmark representative corpus. | Product owner, technical lead |
 | Tables, cross-page content, charts, footnotes, and unusual layouts exceed MVP automation quality. | High | High | Do not promise compliance; flag low-confidence/complex elements; defer verified remediation and alternate parsers. | Product owner, accessibility SME |
 | Exact zero visual-diff fails because the PDF writer changes rendering despite equivalent appearance. | Medium | High | Run an early corpus spike; preserve original streams; make threshold configurable only after accessibility/product approval. | Technical lead, accessibility SME |
 | Payment provider is not selected or contract approval is delayed. | Medium | High | Develop against `IPaymentGateway` fake; keep production launch blocked until signed-event and refund flows pass provider sandbox tests. | Product owner, finance, procurement |
-| Government documents contain confidential or regulated information. | Medium | Critical | Confirm allowed data classes, region, retention, subprocessors, and vendor terms before pilot; keep files private and short-lived. | Security/privacy officer, legal |
-| Two junior developers cannot complete vendor integration and accessibility semantics in eight weeks. | High | High | Keep one-parser/one-writer scope; require senior review of architecture and weekly demonstrations; prioritize vertical slice before UI refinement. | Engineering manager |
+| Government documents contain confidential or regulated information. | Medium | Critical | Accept only Documents with a Public-release attestation (ADR 0004); confirm processor terms (OQ-05) before pilot; keep files private and short-lived; private pipeline in phase 2. | Security/privacy officer, legal |
+| One developer cannot build the writer, the pipeline, and the web application on a fixed timeline. | High | High | Build the pipeline first and run it locally; T-005 is a fixed two-week gate; re-estimate the rest from its results; keep one reader in production. | Developer |
 | No qualified accessibility SME validates semantic output. | High | High | Identify reviewer before acceptance-corpus sign-off; label results as automated and non-guaranteed. | Product owner |
 | Provider outage or rate limiting delays paid work. | Medium | Medium | Persistent queue, bounded retries, visible status, operator retry, and release of the Authorization when a job cannot finish. | Operations |
 | Many real documents still have Validation failures after Repair passes, so they fail without being charged and revenue falls below cost. | Medium | High | Measure the post-repair failure rate on the representative corpus in the T-005 spike and use it as a pricing input before launch. | Product owner, technical lead |
-| Authorization windows (about 7 days for online cards) are too short for queued, repaired, or operator-retried jobs. | Low | Medium | Release-deadline check (FR-41); keep queue time within licensed capacity; confirm window during OQ-03. | Operations, product owner |
-| OCR price changes from `$0.004/page`. | Medium | Medium | Keep provider cost rate configurable and record estimated cost per job; review margin monthly. | Product owner, finance |
+| Authorization windows (about 7 days for online cards) are too short for queued, repaired, or operator-retried jobs. | Low | Medium | Release-deadline check (FR-41); keep queue time within configured capacity; confirm window during OQ-03. | Operations, product owner |
+| Provider prices change (Mistral OCR 4.1 `$0.004/page`, Claude Haiku 5.5 per-token rates). | Medium | Medium | Keep provider cost rate configurable and record estimated cost per job; review margin monthly. | Product owner, finance |
 | Retention or backup assumptions conflict with customer contracts. | Medium | High | Resolve OQ-07 before pilot terms are published. | Legal, security/privacy officer |
 | Insufficient representative documents cause misleading quality claims. | High | High | Assemble and manually annotate a corpus covering born-digital, scanned, mixed, columns, tables, lists, figures, headers/footers, rotated and landscape pages. | Accessibility SME, product owner |
 
@@ -960,17 +975,17 @@ No existing application or dataset is identified in the source material. No prod
 
 | Stage | Entry criteria | Activity | Exit criteria |
 |---|---|---|---|
-| Local vertical spike | PDFix evaluation license and Mistral test credentials available | Process at least one born-digital, one scanned, and one mixed PDF through render → Mistral → IR → PDFix → veraPDF → visual diff | Feasibility results documented; no unresolved blocker to IR mapping or license model |
+| Local vertical spike (T-005) | Mistral and Anthropic test credentials, a local GPU for PaddleOCR-VL-1.6, and an Aspose 30-day licence for the yardstick | Process corpus PDFs, including born-digital, scanned, and mixed, through OCRmyPDF → reader → Haiku → IR → tag writer → veraPDF → visual diff | Feasibility results documented; reader chosen; ADR 0003 build-or-buy check recorded |
 | Development environment | Database, private file storage, fake payment adapter, and worker available | Build complete workflow with test files and non-production integrations | Automated primary and failure-path tests pass |
-| Provider sandbox | Payment provider selected; Mistral and PDFix non-production credentials configured | Verify signed events, idempotency, retry, timeout, and failure behavior | No duplicate jobs/charges in replay tests; secrets and logs reviewed |
+| Provider sandbox | Payment provider selected; Reader and Anthropic non-production credentials configured | Verify signed events, idempotency, retry, timeout, and failure behavior | No duplicate jobs/charges in replay tests; secrets and logs reviewed |
 | Internal alpha | Representative corpus and operator runbook available | Internal users process test documents; accessibility SME reviews outputs | Blocking defects resolved; known limitations documented |
-| Limited government pilot | Legal, security, pricing, retention, and disclaimer questions closed | Invite a limited named customer group and cap volume at licensed capacity | Pilot metrics and support burden reviewed before broader launch |
+| Limited government pilot | Legal, security, pricing, retention, and disclaimer questions closed | Invite a limited named customer group and cap volume at configured capacity | Pilot metrics and support burden reviewed before broader launch |
 
 ### 15.3 Cutover and fallback
 
 - This is a new service; no existing system is replaced.
 - Production ordering remains disabled until price, currency, payment, licenses, storage, privacy terms, and monitoring are configured.
-- If Mistral, PDFix, veraPDF, payment, or storage health is `unhealthy`, new checkout is disabled. Existing authorized jobs remain queued or move to a recoverable failed state. `[ASSUMPTION]`
+- If the reader, Haiku, veraPDF, payment, or storage health is `unhealthy`, new checkout is disabled. Existing authorized jobs remain queued or move to a recoverable failed state. `[ASSUMPTION]`
 - If an Authorized job cannot complete, the operator follows the runbook to retry once where eligible; otherwise the job is Failed and its Authorization is Released.
 - A deployment rollback restores the previous application version and database-compatible worker. Database migrations must support rollback or a documented forward fix. `[ASSUMPTION]`
 - Original documents are never overwritten. Derived files from failed jobs are not offered to customers and expire under the same retention policy.
@@ -999,8 +1014,8 @@ A story is done only when every applicable item below is complete.
 - [ ] Unit tests cover calculation, validation, state transitions, mapping, and error classification.
 - [ ] Integration tests cover database constraints, storage authorization, queue idempotency, and adapter contracts.
 - [ ] End-to-end tests cover upload → quote → fake/sandbox payment → processing → report → download.
-- [ ] Negative tests cover invalid, encrypted, and signed PDFs, oversize PDF, unauthorized ID, expired quote, duplicate payment event, Mistral timeout, PDFix failure, veraPDF failure after Repair passes, visual difference, authorization-expiry release, cancellation race, expired file, and missing file.
-- [ ] Tests prove no Mistral/PDFix execution occurs before a verified Authorization, and that no failed or cancelled job is ever Captured.
+- [ ] Negative tests cover invalid, encrypted, and signed PDFs, oversize PDF, unauthorized ID, expired quote, duplicate payment event, reader timeout, Haiku timeout, tag-writer failure, veraPDF failure after Repair passes, visual difference, authorization-expiry release, cancellation race, expired file, and missing file.
+- [ ] Tests prove no reader, Haiku, or tag-writer execution occurs before a verified Authorization, and that no failed or cancelled job is ever Captured.
 
 ### Accessibility
 
@@ -1029,46 +1044,45 @@ A story is done only when every applicable item below is complete.
 
 ## 17. Suggested Implementation Order
 
-The order below keeps one runnable path at every stage and puts the highest technical risk first.
+The order below is for one developer. It builds the remediation pipeline first and runs it locally, then adds the web application and payment. Only T-005 has a fixed length; later work is re-estimated from its results.
 
-| Sequence | Target | Work | Runnable outcome |
+| Sequence | Stage | Work | Runnable outcome |
 |---:|---|---|---|
-| 1 | Week 1 | Create solution skeleton, domain project, web project, worker project, test projects, configuration validation, health endpoint, database, and private file-store abstraction. | App starts locally, reports health, writes one record, and stores/reads a test file. |
-| 2 | Week 1 | Build PDF preflight spike: upload, signature/parser validation, encryption/signature detection, page count, SHA-256, and original file preservation; separately prototype preprocessing (page rendering and Source object analysis). | One test PDF produces preflight metadata without rendering; preprocessing produces page images; invalid, encrypted, and signed input is rejected. |
-| 3 | Week 1–2 | Build Mistral adapter and Accessibility IR schema/validator using recorded test responses. | One page becomes schema-valid IR; timeout and malformed response tests pass. |
-| 4 | Week 2 | Build PDFix adapter spike and veraPDF adapter; run a representative vertical slice. | One born-digital and one scanned sample reach a remediated PDF and parsed validation report. |
-| 5 | Week 2 | Build deterministic page render comparison and measure the post-repair Validation failure rate on the corpus. | Unchanged/tag-only sample reports `0.0000`; intentionally changed sample fails; failure rate documented as a pricing input. |
-| 6 | Week 3 | Implement customer identity/authorization and document ownership. | Customer A cannot access Customer B's IDs or files. |
-| 7 | Week 3 | Implement upload, preflight status, quote calculation, price snapshot, quote screen, and expiration. | A signed-in customer receives an immutable quote for a valid PDF. |
-| 8 | Week 4 | Implement `IPaymentGateway` (authorize/capture/release), fake adapter, provider adapter shell, signed-event handler, idempotent job creation, and the release deadline. | A fake/sandbox authorization event queues exactly one job; duplicates have no effect; completion captures and failure releases exactly once. |
-| 9 | Week 4–5 | Implement persistent job state machine, worker claims, stage attempts, retries, and customer-facing status mapping. | Authorized job resumes after worker restart and exposes safe status. |
-| 10 | Week 5 | Connect full Mistral → IR → PDFix → veraPDF → Repair passes → visual diff pipeline. | End-to-end authorized test job reaches a deterministic terminal result. |
-| 11 | Week 6 | Implement customer report, review items, PDF/report download authorization, expiration, and cleanup. | Customer downloads completed files and receives `410` after simulated expiration. |
-| 12 | Week 6 | Implement operator search/detail/retry and admin settings/health. | Operator diagnoses a seeded failure; administrator changes future-job settings. |
-| 13 | Week 7 | Accessibility testing, security tests, logging/audit review, rate/timeout tests, backup/restore rehearsal, and representative corpus evaluation. | All Definition of Done gates pass in production-equivalent environment. |
-| 14 | Week 8 | Fix pilot blockers, finish runbooks and disclaimers, configure production vendors, deploy limited pilot, and monitor. | Named pilot users can place capped real orders with an operator on call. |
+| 1 | Pipeline, weeks 1–2 (T-005) | Writer spike and reader benchmark: Docker Compose with worker, veraPDF, OCRmyPDF, and optional PaddleOCR-VL-1.6; tag writer on PdfPig for paragraphs, headings, and one Figure; incremental save; veraPDF; PDFium diff; run Mistral OCR 4.1 and PaddleOCR-VL-1.6 on the corpus. | Simple born-digital and scanned pages pass veraPDF with a `0.0000` diff, or the ADR 0003 trigger is recorded; the reader is chosen. |
+| 2 | Pipeline | Accessibility IR v1 schema and validator; reader adapter and Haiku adapter using recorded responses. | Pages become schema-valid IR; timeout and malformed-response tests pass. |
+| 3 | Pipeline | Preprocessing: page rendering, Source object analysis, Document classification, and the OCRmyPDF text layer for image-only pages. | A mixed sample yields renders, Source objects, and a text layer with a `0.0000` diff. |
+| 4 | Pipeline | Writer coverage: lists, tables, Artifacts, links, title, language, and XMP; stable error codes for unsupported content. | A corpus run reports the pass rate and failure categories. |
+| 5 | Pipeline | Repair passes, Review items, JSON and human-readable report, and a local command that remediates one PDF. | One command turns a PDF into a remediated PDF or a Failure report; post-repair failure rate documented. |
+| 6 | Web app | Web, database, private file store, identity, and document ownership. | Customer A cannot access Customer B's IDs or files. |
+| 7 | Web app | Upload with Public-release attestation, Preflight, quote calculation, price snapshot, and expiration. | A signed-in customer receives an immutable quote for a valid PDF. |
+| 8 | Web app | `IPaymentGateway` (authorize/capture/release), fake adapter, signed-event handler, idempotent job creation, and the release deadline. | Duplicate events have no effect; completion captures and failure releases exactly once. |
+| 9 | Web app | Persistent job state machine, worker claims, stage attempts, retries, and customer-facing status, running the pipeline from stage 5. | An authorized job resumes after a worker restart and exposes safe status. |
+| 10 | Web app | Customer report, downloads, expiration and cleanup, operator retry, and admin settings and health. | Customer downloads completed files; operator diagnoses a seeded failure. |
+| 11 | Pilot | Accessibility, security, and backup/restore testing; corpus evaluation; runbooks and disclaimers; limited pilot. | Definition of Done gates pass; capped pilot runs. |
 
 ### Day-one tickets
 
+Work T-005 first.
+
 | Ticket | Owner suggestion | Work | Done means |
 |---|---|---|---|
-| T-001 — Solution and health skeleton | Developer 1 | Create web, domain/application, infrastructure, worker, unit-test, integration-test projects; add configuration validation and `/health`. | Clean checkout builds and tests; web and worker start; health reports database/storage fakes. |
-| T-002 — File storage contract | Developer 2 | Define `IFileStore`, metadata model, local-development implementation, SHA-256 calculation, and owner-independent opaque keys. | Round-trip and deletion tests pass; path traversal tests fail safely; no public path is returned. |
-| T-003 — PDF preflight contract | Developer 1 | Define accepted/rejected results, parser abstraction, page count, size/signature checks, and stable error codes. | Fixtures for valid, non-PDF, corrupted, oversize, and over-page-limit inputs produce expected results. |
-| T-004 — Accessibility IR v1 schema | Developer 2 | Define document/page/element/table/list/figure structures and JSON schema; create validator and examples. | Valid examples pass; missing IDs, invalid bounding boxes, duplicate reading order, and invalid table spans fail with stable errors. |
-| T-005 — Vendor feasibility harness | Developers 1 and 2 pairing | Wire one hard-coded test PDF through render, Mistral adapter, IR, PDFix adapter, veraPDF, and visual diff outside the customer UI. | Results and blockers are documented for born-digital and scanned samples; output and reports are saved as test files. |
+| T-005 — Writer spike and reader benchmark | Developer | Wire corpus PDFs through OCRmyPDF, the reader (Mistral OCR 4.1 and PaddleOCR-VL-1.6), Haiku, IR, the service's tag writer, veraPDF, and the PDFium diff outside any UI. Run Aspose.PDF under a 30-day licence on the same files as a yardstick. | Two weeks. Pass rate, pixel diff, reader quality, seconds per page, and cost per page are documented, and the ADR 0003 build-or-buy check is recorded. |
+| T-004 — Accessibility IR v1 schema | Developer | Define document/page/element/table/list/figure structures and JSON schema; create validator and examples. | Valid examples pass; missing IDs, invalid bounding boxes, duplicate reading order, and invalid table spans fail with stable errors. |
+| T-001 — Solution and health skeleton | Developer | Create domain/application, infrastructure, worker, unit-test, and integration-test projects; add configuration validation. The web project and `/health` follow in the web-app stage. | Clean checkout builds and tests; the worker starts in Docker Compose. |
+| T-002 — File storage contract | Developer | Define `IFileStore`, metadata model, local-development implementation, SHA-256 calculation, and owner-independent opaque keys. | Round-trip and deletion tests pass; path traversal tests fail safely; no public path is returned. |
+| T-003 — PDF preflight contract | Developer | Define accepted/rejected results, parser abstraction, page count, size/signature checks, and stable error codes. | Fixtures for valid, non-PDF, corrupted, oversize, and over-page-limit inputs produce expected results. |
 
-T-005 is the release gate. If the team cannot map IR elements back to source PDF objects, preserve page rendering, or secure acceptable PDFix SaaS rights, product leadership must resolve OQ-04 before the team builds checkout UI.
+T-005 is the first milestone and the release gate. If the tag writer cannot reach a `0.0000` diff and a veraPDF pass on simple pages by its end, apply the ADR 0003 trigger before building further.
 
 ## 18. Open Questions
 
 | ID | Question | Why it matters | What it blocks | Owner |
 |---|---|---|---|---|
 | OQ-01 | Does “Govern” mean only U.S. state/local-government staff, or any government/public-sector customer? | Determines eligibility, language, procurement, support, and data policy. | Final personas, terms, pilot recruitment | Product owner |
-| OQ-02 | What customer price per page, currency, minimum charge, quote lifetime, tax treatment, and refund policy are approved? | Defines checkout amount and commercial viability. | Production pricing and customer terms | Product owner, finance, legal |
+| OQ-02 | What customer price per page, currency, minimum charge, quote lifetime, tax treatment, and refund policy are approved? Alternatives to paying per order (subscriptions with a page allowance, prepaid page credits) are deferred until the pipeline works. | Defines checkout amount and commercial viability. | Production pricing and customer terms | Product owner, finance, legal |
 | OQ-03 | Which payment provider will be used, and does it support the target customers, manual capture and its authorization window, signed events, refunds, taxes, and required regions? | The source requires payment but names no provider. | Production checkout, refund runbook, provider endpoint details | Product owner, finance, procurement, security |
-| OQ-04 | What are PDFix Enterprise's written SaaS rights, annual/perpetual price, worker/instance definition, container rules, autoscaling rules, output redistribution rights, and activation method? | License terms may determine architecture and margin. | Production remediation and deployment topology | Procurement, legal, product owner, PDFix |
-| OQ-05 | What Mistral contract, region, retention/training terms, authentication, endpoint, rate limit, batch option, and final OCR 4.1 price apply? | Government documents may not be allowed in an unapproved cloud service. | Production OCR, concurrency, privacy notice, cost model | Security/privacy, legal, procurement, Mistral |
+| OQ-04 | When, if ever, should the service buy Aspose.PDF for .NET (Developer OEM, about $3,597) instead of extending its own writer, and does the Aspose EULA cover the hosted SaaS? | ADR 0003 sets the trigger; a licence would replace part of the writer. | Writer build-or-buy decision | Developer, product owner |
+| OQ-05 | What Mistral and Anthropic contract, region, retention and training terms (including Anthropic zero data retention, for which Batch is not eligible), authentication, endpoint, rate limit, batch option, and final prices apply? | Third-party processors see customer Documents (ADR 0004). | Production reader and Haiku, concurrency, privacy notice, cost model | Security/privacy, legal, procurement, Mistral, Anthropic |
 | OQ-06 | Which database, private file storage, queue, secret store, and hosting environment are approved? | Required for deployable infrastructure and cost estimates. | Infrastructure implementation and deployment | Engineering manager, operations, security |
 | OQ-07 | What data classifications (sensitivity levels) are permitted, and what are the approved file, audit, payment, and backup retention periods? | Government content may include confidential or regulated data. | Privacy notice, cleanup, backups, customer eligibility | Security/privacy officer, records manager, legal |
 | OQ-08 | Is ASP.NET Core Identity acceptable, or is government/enterprise federation such as Entra ID required for MVP? | Changes registration, support, account ownership, and organization model. | Production authentication and onboarding | Product owner, security |
@@ -1081,7 +1095,7 @@ T-005 is the release gate. If the team cannot map IR elements back to source PDF
 | OQ-15 | **Resolved.** Validation failures trigger up to 3 Repair passes; a job that still fails is not delivered and its Authorization is Released (ADR 0002). | — | — | — |
 | OQ-16 | **Resolved.** Deletion removes all Stored files and the filename; financial and audit records are retained without document content (DR-14). Legal should still confirm retention periods under OQ-07. | — | — | — |
 | OQ-17 | What support channel and response target should failed orders display? | The MVP currently has only a support reference ID. | Failure screen and runbook | Product owner, operations |
-| OQ-18 | Is a senior engineer available for architecture, security, payment, and PDF semantics review during the eight-week schedule? | Two junior developers need decisions and review in high-risk areas. | Delivery confidence and Definition of Done staffing | Engineering manager |
+| OQ-18 | Is an experienced reviewer available for architecture, security, payment, and PDF semantics review? | One developer needs a second opinion in high-risk areas. | Delivery confidence and Definition of Done staffing | Developer |
 
 ## 19. Glossary
 
@@ -1105,14 +1119,17 @@ Domain terms (Document, Quote, Authorization, Capture, Release, Job, Attempt, Re
 | Idempotent | Safe to repeat without creating a second charge, order, job, or other duplicate effect. |
 | MCID | Marked Content Identifier. A PDF identifier that connects page content to an element in the structure tree. |
 | Minor currency unit | The smallest whole unit used for payment calculation, such as a cent for USD. |
-| Mistral OCR 4.1 | The cloud document-processing model selected for MVP OCR, layout blocks, labels, reading order, and confidence data. |
+| Claude Haiku 5.5 | Anthropic model that assigns heading levels and list structure and drafts alt text. |
+| Mistral OCR 4.1 | Cloud document-understanding model; one of the two MVP reader candidates. |
+| OCRmyPDF | Open-source tool that adds an invisible OCR text layer to image-only pages without re-rasterizing them. |
+| PaddleOCR-VL-1.6 | Apache-2.0 open-weight document model; the self-hosted MVP reader candidate. |
 | Mixed PDF | A Document containing both native digital content and scanned/image-only content. Classification applies to the Document, not to pages. |
 | OCR | Optical Character Recognition. It converts text visible in an image into machine-readable text. |
 | PAC 2026 | PDF Accessibility Checker. It is used as a development or human QA tool, not embedded in the MVP service. |
 | ParentTree | A PDF data structure used to map marked page content and annotations to structure elements. |
 | PDF/UA | ISO standard for accessible PDF. PDF/UA-1 is the MVP machine-validation target; a pass does not by itself prove WCAG or legal compliance. |
-| PDFBox | Apache-licensed PDF library discussed as a possible future custom tagging engine; not part of MVP. |
-| PDFix Enterprise | Commercial SDK selected to write and repair accessibility structures in the original PDF. |
+| PdfPig | MIT-licensed .NET PDF library that the service's tag writer is built on (ADR 0003). |
+| Tag writer | The service's own module that writes a new tag tree into a copy of the original PDF (ADR 0003). |
 | Preflight | The minimal checks performed before payment: file type, readability, encryption/restrictions, digital signature, size, page count, and configured limits. No rendering or OCR. |
 | Quote | An immutable page count, price per page, currency, total, and expiration shown before payment. |
 | Reading order | The semantic sequence in which assistive technology presents document content. |

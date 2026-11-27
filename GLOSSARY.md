@@ -12,6 +12,10 @@ _Avoid_: Account, organization, tenant
 One PDF uploaded by a customer, plus what Preflight learned about it.
 _Avoid_: File, upload
 
+**Public-release attestation**:
+The Customer's confirmation, given at upload, that a Document is intended for public release and may be processed by third-party services. The service does not publish Documents; the attestation covers what processing may expose them to.
+_Avoid_: Consent, privacy check
+
 **Preflight**:
 The smallest set of checks needed to price a Document: that it is a readable, modifiable, unsigned PDF within the limits, and how many Billable pages it has. It deliberately does no expensive processing before payment.
 _Avoid_: Inspection, analysis
