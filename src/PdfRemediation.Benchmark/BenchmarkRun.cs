@@ -8,12 +8,20 @@ using System.Text.Json.Serialization;
 using PdfRemediation.Domain.AccessibilityIr;
 using PdfRemediation.Infrastructure.Checks;
 using PdfRemediation.Infrastructure.Pdf;
+using PdfRemediation.Infrastructure.Reading;
+using PdfRemediation.Infrastructure.Reading.Mistral;
+using PdfRemediation.Infrastructure.SourceObjects;
 using PdfRemediation.Infrastructure.TagWriting;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Tokens;
 
 namespace PdfRemediation.Benchmark;
 
-/// <summary>How one corpus file did. <see cref="Category"/> is the stable code of the first stage that failed.</summary>
-public sealed record FileResult(string Name, string Status, string? Category, string? Message, int? Pages, double Seconds);
+/// <summary>
+/// How one corpus file did. <see cref="Category"/> is the stable code of the first stage that failed.
+/// The reader fields are set when a reader ran, live or replayed: its estimated cost and the pages it billed.
+/// </summary>
+public sealed record FileResult(string Name, string Status, string? Category, string? Message, int? Pages, double Seconds, double? ReaderCostUsd, int? ReaderPages);
 
 public sealed record SecondsPerPage(double Mean, double P95);
 
@@ -25,13 +33,14 @@ public sealed record RunSummary(
     IReadOnlyDictionary<string, int> FailuresByCategory,
     int Pages,
     SecondsPerPage? SecondsPerPage,
+    double? ReaderCostPerPage,
     IReadOnlyList<FileResult> Results);
 
 /// <summary>
 /// One benchmark run over a corpus folder. Each file goes through IR → writer → veraPDF → pixel diff
 /// under its own timeout; a file that fails or times out is recorded and the run moves on.
 /// </summary>
-internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
+internal sealed class BenchmarkRun(BenchmarkOptions options, MistralOptions mistral, string? mistralApiKey, TextWriter log)
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -42,6 +51,9 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
 
     private readonly ITagWriter writer = new PdfPigTagWriter();
     private readonly VeraPdfOptions veraPdfOptions = VeraPdfOptions.DockerCompose(options.ComposeFile);
+
+    // Each HTTP request has its own timeout (INT-01), so the client itself never times out.
+    private readonly Lazy<HttpClient> http = new(() => new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
 
     public async Task<RunSummary> ExecuteAsync()
     {
@@ -82,25 +94,48 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
     {
         var stopwatch = Stopwatch.StartNew();
         int? pages = null;
-        FileResult Failed(string category, string message) => new(name, "failed", category, message, pages, stopwatch.Elapsed.TotalSeconds);
+        double? readerCost = null;
+        int? readerPages = null;
+        FileResult Failed(string category, string message) => new(name, "failed", category, message, pages, stopwatch.Elapsed.TotalSeconds, readerCost, readerPages);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds));
         try
         {
-            var irPath = Path.ChangeExtension(pdfPath, ".ir.json");
-            if (!File.Exists(irPath))
+            IrDocument ir;
+            byte[] original;
+            if (options.IrSource == "files")
             {
-                return Failed("IR_MISSING", $"No IR file at {Path.GetFileName(irPath)}.");
+                var irPath = Path.ChangeExtension(pdfPath, ".ir.json");
+                if (!File.Exists(irPath))
+                {
+                    return Failed("IR_MISSING", $"No IR file at {Path.GetFileName(irPath)}.");
+                }
+
+                var parsed = IrParser.Parse(await File.ReadAllTextAsync(irPath, timeout.Token));
+                if (parsed.Ir is null)
+                {
+                    await WriteJson(Path.Combine(folder, "ir-errors.json"), parsed.Errors);
+                    return Failed("IR_INVALID", $"{parsed.Errors.Count} IR validation errors; see ir-errors.json.");
+                }
+
+                ir = parsed.Ir;
+                original = await File.ReadAllBytesAsync(pdfPath, timeout.Token);
+            }
+            else
+            {
+                original = await File.ReadAllBytesAsync(pdfPath, timeout.Token);
+                var read = await ReadWithMistral(original, name, folder, timeout.Token);
+                readerCost = read.Calls.Sum(c => c.EstimatedCostUsd);
+                readerPages = read.Calls.Sum(c => c.PagesProcessed);
+                if (read.Ir is null)
+                {
+                    var error = read.Errors.FirstOrDefault();
+                    return Failed(error?.Code ?? "READER_FAILED", error?.Message ?? "The reader produced no IR; see reader.json.");
+                }
+
+                ir = read.Ir;
             }
 
-            var parsed = IrParser.Parse(await File.ReadAllTextAsync(irPath, timeout.Token));
-            if (parsed.Ir is not { } ir)
-            {
-                await WriteJson(Path.Combine(folder, "ir-errors.json"), parsed.Errors);
-                return Failed("IR_INVALID", $"{parsed.Errors.Count} IR validation errors; see ir-errors.json.");
-            }
-
-            var original = await File.ReadAllBytesAsync(pdfPath, timeout.Token);
             var written = await Task.Run(() => writer.Write(original, ir), timeout.Token).WaitAsync(timeout.Token);
             await WriteJson(Path.Combine(folder, "diagnostics.json"), written.Diagnostics);
             if (written.TaggedPdf is not { } tagged)
@@ -135,7 +170,7 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
                 return Failed("VISUAL_DIFFERENCE", diff.Failure ?? "Pixels differ; see visual.json.");
             }
 
-            return new FileResult(name, "passed", null, null, pages, stopwatch.Elapsed.TotalSeconds);
+            return new FileResult(name, "passed", null, null, pages, stopwatch.Elapsed.TotalSeconds, readerCost, readerPages);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
@@ -149,6 +184,47 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
         {
             return Failed("UNEXPECTED_ERROR", ex.ToString());
         }
+    }
+
+    /// <summary>
+    /// Runs the Mistral reader over one file. Live mode renders every page and records each response under
+    /// <c>&lt;recordings&gt;/mistral/&lt;name&gt;/</c>; replay mode reads those recordings and sends nothing.
+    /// </summary>
+    private async Task<ReaderResult> ReadWithMistral(byte[] original, string name, string folder, CancellationToken token)
+    {
+        var live = options.Mode == "live";
+        var input = await Task.Run(() => ReaderInputFor(original, name, render: live), token).WaitAsync(token);
+        var recordings = Path.Combine(options.Recordings, "mistral", name);
+        IMistralTransport transport = live
+            ? new MistralLiveTransport(http.Value, mistralApiKey!, mistral, recordings)
+            : new MistralReplayTransport(recordings);
+
+        var result = await new MistralOcrReader(transport, mistral.CostPerPageUsd).ReadAsync(input, token);
+        await WriteJson(Path.Combine(folder, "reader.json"), new { result.Errors, result.Warnings, result.Calls });
+        if (result.IrJson is { } irJson)
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, "ir.json"), irJson, token);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The reader's input. The IR title is the PDF's Info title, or the file name; its language is the catalog's
+    /// /Lang, or en-US. Replay never sends a render, so it skips rendering.
+    /// </summary>
+    private ReaderInput ReaderInputFor(byte[] pdf, string name, bool render)
+    {
+        var index = SourceObjectIndex.Build(pdf);
+        using var document = PdfDocument.Open(pdf);
+        var title = string.IsNullOrWhiteSpace(document.Information.Title) ? name : document.Information.Title;
+        var language = document.Structure.Catalog.CatalogDictionary.TryGet<StringToken>(NameToken.Lang, out var lang) && !string.IsNullOrWhiteSpace(lang.Data)
+            ? lang.Data
+            : "en-US";
+        var pages = render
+            ? PageRenderer.Render(pdf, options.Dpi)
+            : document.GetPages().Select(p => new ReaderPage(p.Number, p.Width, p.Height, [])).ToList();
+        return new ReaderInput(title, language, pages, index);
     }
 
     private static int PageCount(byte[] pdf)
@@ -165,6 +241,16 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
         output = options.Out,
         writer = options.Writer,
         irSource = options.IrSource,
+        mode = options.IrSource == "files" ? null : options.Mode,
+        recordings = options.IrSource == "files" ? null : options.Recordings,
+        mistral = options.IrSource != "mistral" ? null : new
+        {
+            endpoint = mistral.Endpoint.ToString(),
+            model = mistral.Model,
+            costPerPageUsd = mistral.CostPerPageUsd,
+            requestTimeoutSeconds = mistral.RequestTimeout.TotalSeconds,
+            retryDelaysSeconds = mistral.RetryDelays.Select(d => d.TotalSeconds),
+        },
         timeoutSeconds = options.TimeoutSeconds,
         dpi = options.Dpi,
         veraPdf = new
@@ -205,8 +291,12 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Count());
 
+        // Reader cost per page is over every page the reader billed, whether or not the file then passed.
+        var readerPages = results.Sum(r => r.ReaderPages ?? 0);
+        double? readerCostPerPage = readerPages == 0 ? null : results.Sum(r => r.ReaderCostUsd ?? 0) / readerPages;
+
         var passed = results.Count(r => r.Status == "passed");
-        return new RunSummary(runId, results.Count, passed, results.Count - passed, failures, measured.Sum(r => r.Pages!.Value), secondsPerPage, results);
+        return new RunSummary(runId, results.Count, passed, results.Count - passed, failures, measured.Sum(r => r.Pages!.Value), secondsPerPage, readerCostPerPage, results);
     }
 
     private static string Markdown(RunSummary summary)
@@ -219,6 +309,12 @@ internal sealed class BenchmarkRun(BenchmarkOptions options, TextWriter log)
         if (summary.SecondsPerPage is { } spp)
         {
             md.AppendLine(CultureInfo.InvariantCulture, $"Seconds per page over {summary.Pages} pages: mean {spp.Mean:0.000}, p95 {spp.P95:0.000}.");
+            md.AppendLine();
+        }
+
+        if (summary.ReaderCostPerPage is { } cost)
+        {
+            md.AppendLine(CultureInfo.InvariantCulture, $"Reader cost per page: ${cost:0.0000} (estimated from the configured rate).");
             md.AppendLine();
         }
 
