@@ -99,7 +99,7 @@ public class TagWriterTests
     [Trait("Category", Docker.Category)]
     public async Task The_output_passes_veraPDF_pdf_ua_1()
     {
-        var report = await Docker.VeraPdf.ValidateAsync(Result.TaggedPdf!);
+        var report = (await Docker.VeraPdf.ValidateAsync(Result.TaggedPdf!)).Report;
 
         Assert.Empty(report.Failures);
         Assert.True(report.Passed);

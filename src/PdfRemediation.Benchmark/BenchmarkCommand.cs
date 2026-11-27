@@ -1,23 +1,25 @@
 namespace PdfRemediation.Benchmark;
 
+/// <summary>The benchmark command (seam 1): parses the command line and runs the corpus.</summary>
 public static class BenchmarkCommand
 {
-    public const string Usage = """
-        Usage: pdf-benchmark --corpus <folder> --out <folder> [options]
-
-        Runs each PDF in the corpus folder through the remediation pipeline.
-
-        Options:
-          --corpus <folder>          Folder of corpus PDFs to run.
-          --out <folder>             Folder to write benchmark output into.
-          --reader <mistral|paddle>  Reader to use.
-          --writer <ours|aspose>     Tag writer to use.
-          --mode <live|replay>       Call providers live, or replay recorded responses.
-        """;
-
-    public static int Run(string[] args, TextWriter output)
+    /// <summary>Returns 0 when every file passed, 2 when the run finished with failures, and 1 for bad arguments.</summary>
+    public static async Task<int> RunAsync(string[] args, TextWriter output)
     {
-        output.WriteLine(Usage);
-        return 1;
+        var (options, error) = BenchmarkOptions.Parse(args);
+        if (options is null)
+        {
+            if (args.Length > 0)
+            {
+                await output.WriteLineAsync(error);
+                await output.WriteLineAsync();
+            }
+
+            await output.WriteLineAsync(BenchmarkOptions.Usage);
+            return 1;
+        }
+
+        var summary = await new BenchmarkRun(options, output).ExecuteAsync();
+        return summary.Failed == 0 ? 0 : 2;
     }
 }
