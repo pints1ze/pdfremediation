@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfRemediation.Benchmark\PdfRemediation.Benchmark.csproj" />
+    <ProjectReference Include="..\..\src\PdfRemediation.Infrastructure\PdfRemediation.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\PdfRemediation.Domain\PdfRemediation.Domain.csproj" />
   </ItemGroup>
 
 </Project>

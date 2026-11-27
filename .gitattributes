@@ -1,0 +1,3 @@
+# Fixture bytes are referenced by offset (Source object IDs); never convert them.
+*.pdf binary
+*.ttf binary
