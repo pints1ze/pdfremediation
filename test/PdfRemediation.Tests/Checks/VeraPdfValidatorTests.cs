@@ -8,7 +8,7 @@ public class VeraPdfValidatorTests
     [Fact]
     public async Task An_untagged_pdf_fails_pdf_ua_1_with_normalized_failures()
     {
-        var report = await Docker.VeraPdf.ValidateAsync(Fixtures.Bytes("headings-and-paragraphs.pdf"));
+        var report = (await Docker.VeraPdf.ValidateAsync(Fixtures.Bytes("headings-and-paragraphs.pdf"))).Report;
 
         Assert.Equal("PDF/UA-1", report.Profile);
         Assert.False(report.Passed);

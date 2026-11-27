@@ -10,6 +10,9 @@ public sealed record ValidationFailure(string RuleId, int Count, string Message)
 /// <summary>A veraPDF result normalized to the shape in PRD §10.4.</summary>
 public sealed record ValidationReport(string Profile, bool Passed, int FailureCount, IReadOnlyList<ValidationFailure> Failures);
 
+/// <summary>The normalized report plus veraPDF's own JSON report, kept for inspection.</summary>
+public sealed record VeraPdfOutput(ValidationReport Report, string RawReport);
+
 /// <summary>
 /// How to start veraPDF. The command is configuration: <see cref="Executable"/> and <see cref="Arguments"/>
 /// must start a veraPDF CLI that reads the PDF from stdin.
@@ -29,7 +32,7 @@ public sealed class VeraPdfValidator(VeraPdfOptions options)
         ["ua1"] = "PDF/UA-1",
     };
 
-    public async Task<ValidationReport> ValidateAsync(byte[] pdf, CancellationToken cancellationToken = default)
+    public async Task<VeraPdfOutput> ValidateAsync(byte[] pdf, CancellationToken cancellationToken = default)
     {
         var start = new ProcessStartInfo(options.Executable)
         {
@@ -56,16 +59,17 @@ public sealed class VeraPdfValidator(VeraPdfOptions options)
             process.StandardInput.Close();
             await process.WaitForExitAsync(timeout.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
+            cancellationToken.ThrowIfCancellationRequested();
             throw new PdfProcessingException("VALIDATOR_TIMEOUT", $"veraPDF did not finish within {options.Timeout}.");
         }
 
         var json = await stdout;
         try
         {
-            return Normalize(json);
+            return new VeraPdfOutput(Normalize(json), json);
         }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
         {
